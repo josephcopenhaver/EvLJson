@@ -1,0 +1,9 @@
+1. benchmark current implementation
+2. allow for callback notifications
+3. allow for filtering valid structs
+4. allow for reduction/mutation of elements when creating struct members
+5. allow for specifying array bounds when getting published structs
+6. Allow for struct publish callbacks
+7. answer inlining questions by disassembling compiled code and optimize further
+8. investigate further memory footprint reductions
+9. sleep
