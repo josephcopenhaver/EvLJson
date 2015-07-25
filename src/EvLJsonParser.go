@@ -63,7 +63,8 @@ const (
 	STATE_IN_FALSE
 	STATE_IN_ZERO_OR_DECIMAL_OR_EXPONENT_START
 	STATE_IN_INT
-	STATE_IN_DECIMAL_END
+	STATE_IN_DECIMAL_FRACTIONAL_START
+	STATE_IN_DECIMAL_FRACTIONAL_END
 	STATE_IN_EXPONENT_START
 	STATE_IN_EXPONENT_END
 	STATE_IN_STRING
@@ -85,7 +86,8 @@ var PARSER_STATE_ACTION_LOOKUP = []func(p *EvLParser, b byte) bool{
 	handleFalse,
 	handleZeroOrDecimalOrExponentStart,
 	handleInt,
-	handleDecimal,
+	handleDecimalFractionalStart,
+	handleDecimalFractionalEnd,
 	handleExponentStart,
 	handleExponentEnd,
 	handleString,
@@ -221,7 +223,7 @@ func handleZeroOrDecimalOrExponentStart(p *EvLParser, b byte) bool {
 	switch b {
 	case '.':
 		// TODO: negotiate type changing features
-		p.state = STATE_IN_DECIMAL_END
+		p.state = STATE_IN_DECIMAL_FRACTIONAL_START
 		return true
 	case 'e':
 		// TODO: negotiate type changing features
@@ -240,7 +242,7 @@ func handleInt(p *EvLParser, b byte) bool {
 	switch b {
 	case '.':
 		// TODO: negotiate type changing features
-		p.state = STATE_IN_DECIMAL_END
+		p.state = STATE_IN_DECIMAL_FRACTIONAL_START
 		return true
 	case 'e':
 		// TODO: negotiate type changing features
@@ -251,8 +253,22 @@ func handleInt(p *EvLParser, b byte) bool {
 	return false
 }
 
-func handleDecimal(p *EvLParser, b byte) bool {
+func handleDecimalFractionalStart(p *EvLParser, b byte) bool {
 	if b >= '0' && b <= '9' {
+		p.state = STATE_IN_DECIMAL_FRACTIONAL_END
+		return true
+	}
+	popState(p)
+	return false
+}
+
+func handleDecimalFractionalEnd(p *EvLParser, b byte) bool {
+	switch {
+	case b == 'e':
+		// TODO: negotiate type changing features
+		p.state = STATE_IN_EXPONENT_START
+		return true
+	case b >= '0' && b <= '9':
 		return true
 	}
 	popState(p)
