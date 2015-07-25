@@ -102,22 +102,19 @@ var PARSER_STATE_ACTION_LOOKUP = []func(p *EvLParser, b byte) bool{
 	handleEnd,
 }
 
-var OBJ_ARRAY_FREE_CONTEXT_WHITESPACE = []byte{
-	0x20, // SPACE
-	0x09, // TAB
-	0x0A, // LF
-	0x0D, // CR
-}
-
 func isCharWhitespace(b byte) bool {
-	// TODO: experiment with removing the `whitespaceByte` var if this function fails to inline
-	for _, whitespaceByte := range OBJ_ARRAY_FREE_CONTEXT_WHITESPACE {
-		if whitespaceByte == b {
-			return true
-		}
+	switch b {
+	case 0x20: // SPACE
+		fallthrough
+	case 0x09: // TAB
+		fallthrough
+	case 0x0A: // LF
+		fallthrough
+	case 0x0D: // CR
+		return true
+	default:
+		return false
 	}
-
-	return false
 }
 
 func pushState(p *EvLParser, newState uint8) {
