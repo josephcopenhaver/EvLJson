@@ -129,7 +129,7 @@ func popState(p *EvLParser) {
 }
 
 func getNewObjState(p *EvLParser, b byte) uint8 {
-	if b >= '1' || b <= '9' {
+	if b >= '1' && b <= '9' {
 		return STATE_IN_INT
 	}
 	switch b {
@@ -300,7 +300,7 @@ func handleString(p *EvLParser, b byte) bool {
 			// do nothing
 		} else {
 			if b > 'F' {
-				b -= ('f' - 'F');
+				b -= ('f' - 'F')
 			}
 			if b < 'A' || b > 'F' {
 				p.err = unspecifiedParseError
