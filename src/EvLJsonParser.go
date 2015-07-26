@@ -57,7 +57,7 @@ func (err UnspecifiedJsonParseError) Error() string {
 var unspecifiedParseError = UnspecifiedJsonParseError{}
 
 const (
-	STATE_START = iota
+	STATE_UNDEFINED = iota
 	STATE_IN_NULL
 	STATE_IN_TRUE
 	STATE_IN_FALSE
@@ -128,39 +128,38 @@ func popState(p *EvLParser) {
 	p.state, p.stateStack = p.stateStack[newMaxIdx], p.stateStack[:newMaxIdx]
 }
 
-func isNewValue(p *EvLParser, b byte) bool {
+func getNewObjState(p *EvLParser, b byte) uint8 {
+	if b >= '1' || b <= '9' {
+		return STATE_IN_INT
+	}
 	switch b {
 	case '0':
-		pushState(p, STATE_IN_ZERO_OR_DECIMAL_OR_EXPONENT_START)
-		return true
+		return STATE_IN_ZERO_OR_DECIMAL_OR_EXPONENT_START
 	case '[':
-		pushState(p, STATE_IN_ARRAY_EXPECT_FIRST_ENTRY_OR_END)
-		return true
+		return STATE_IN_ARRAY_EXPECT_FIRST_ENTRY_OR_END
 	case '{':
-		pushState(p, STATE_IN_DICT_EXPECT_FIRST_KEY_OR_END)
-		return true
+		return STATE_IN_DICT_EXPECT_FIRST_KEY_OR_END
 	case OBJ_STR_NULL[0]:
-		pushState(p, STATE_IN_NULL)
-		return true
+		return STATE_IN_NULL
 	case OBJ_STR_FALSE[0]:
-		pushState(p, STATE_IN_FALSE)
-		return true
+		return STATE_IN_FALSE
 	case OBJ_STR_TRUE[0]:
-		pushState(p, STATE_IN_TRUE)
-		return true
+		return STATE_IN_TRUE
 	case '"':
-		pushState(p, STATE_IN_STRING)
-		return true
+		return STATE_IN_STRING
 	case '-':
-		pushState(p, STATE_IN_INT)
-		return true
+		return STATE_IN_INT
 	default:
-		if b >= '1' || b <= '9' {
-			pushState(p, STATE_IN_INT)
-			return true
-		}
-		return false
+		return STATE_UNDEFINED
 	}
+}
+
+func handleIfStartOfNewObj(p *EvLParser, b byte) bool {
+	if newObjState := getNewObjState(p, b); newObjState != STATE_UNDEFINED {
+		pushState(p, newObjState)
+		return true
+	}
+	return false
 }
 
 func handleStart(p *EvLParser, b byte) bool {
@@ -170,7 +169,7 @@ func handleStart(p *EvLParser, b byte) bool {
 		}
 	}
 	p.state = STATE_END
-	if isNewValue(p, b) {
+	if handleIfStartOfNewObj(p, b) {
 		return true
 	}
 	p.err = unspecifiedParseError
@@ -261,11 +260,11 @@ func handleDecimalFractionalStart(p *EvLParser, b byte) bool {
 
 func handleDecimalFractionalEnd(p *EvLParser, b byte) bool {
 	switch {
+	case b >= '0' && b <= '9':
+		return true
 	case b == 'e':
 		// TODO: negotiate type changing features
 		p.state = STATE_IN_EXPONENT_START
-		return true
-	case b >= '0' && b <= '9':
 		return true
 	}
 	popState(p)
@@ -297,16 +296,16 @@ func handleExponentEnd(p *EvLParser, b byte) bool {
 func handleString(p *EvLParser, b byte) bool {
 	if p.stringHexDigitIndex > 0 {
 		p.stringHexDigitIndex++
-		switch {
-		case b >= '0' && b <= '9':
-			break
-		case b >= 'a' && b <= 'f':
-			break
-		case b >= 'A' && b <= 'F':
-			break
-		default:
-			p.err = unspecifiedParseError
-			return true
+		if b >= '0' && b <= '9' {
+			// do nothing
+		} else {
+			if b > 'F' {
+				b -= ('f' - 'F');
+			}
+			if b < 'A' || b > 'F' {
+				p.err = unspecifiedParseError
+				return true
+			}
 		}
 		if p.stringHexDigitIndex == 5 {
 			p.stringHexDigitIndex = 0
@@ -394,8 +393,9 @@ func handleDictExpectValue(p *EvLParser, b byte) bool {
 			return true
 		}
 	}
-	if isNewValue(p, b) {
-		p.stateStack[len(p.stateStack)-1] = STATE_IN_DICT_EXPECT_ENTRY_DELIM_OR_END // TODO: fix impl (HACK)
+	if newObjState := getNewObjState(p, b); newObjState != STATE_UNDEFINED {
+		p.state = STATE_IN_DICT_EXPECT_ENTRY_DELIM_OR_END
+		pushState(p, newObjState)
 		return true
 	}
 	p.err = unspecifiedParseError
@@ -441,17 +441,17 @@ func handleArrayExpectFirstEntryOrEnd(p *EvLParser, b byte) bool {
 			return true
 		}
 	}
-	switch {
-	case b == ']':
+	if b == ']' {
 		popState(p)
 		return true
-	case isNewValue(p, b):
-		p.stateStack[len(p.stateStack)-1] = STATE_IN_ARRAY_EXPECT_DELIM_OR_END // TODO: fix impl (HACK)
-		return true
-	default:
-		p.err = unspecifiedParseError
+	}
+	if newObjState := getNewObjState(p, b); newObjState != STATE_UNDEFINED {
+		p.state = STATE_IN_ARRAY_EXPECT_DELIM_OR_END
+		pushState(p, newObjState)
 		return true
 	}
+	p.err = unspecifiedParseError
+	return true
 }
 
 func handleArrayExpectDelimOrEnd(p *EvLParser, b byte) bool {
@@ -478,8 +478,9 @@ func handleArrayExpectEntry(p *EvLParser, b byte) bool {
 			return true
 		}
 	}
-	if isNewValue(p, b) {
-		p.stateStack[len(p.stateStack)-1] = STATE_IN_ARRAY_EXPECT_DELIM_OR_END // TODO: fix impl (HACK)
+	if newObjState := getNewObjState(p, b); newObjState != STATE_UNDEFINED {
+		p.state = STATE_IN_ARRAY_EXPECT_DELIM_OR_END
+		pushState(p, newObjState)
 		return true
 	}
 	p.err = unspecifiedParseError
@@ -503,7 +504,7 @@ func (p *EvLParser) Parse(bufferedReader *bufio.Reader) error {
 	}
 
 	/*
-	   debugOldState := uint8(STATE_START)
+	   debugOldState := uint8(STATE_UNDEFINED)
 	   debugOldDepth := 0
 
 	   debugFunc := func() {
@@ -569,7 +570,7 @@ func NewEvLParser() EvLParser {
 		// TODO: allow for configuring this size parameter
 		stateStack:        []uint8{0, 0, 0},
 		literalStateIndex: 1,
-		state:             STATE_START,
+		state:             STATE_UNDEFINED,
 		err:               nil,
 		allowFreeContextWhitespace: false,
 	}
