@@ -1,0 +1,6 @@
+#!/bin/bash
+BENCHTIME="$1"  # in seconds
+if [[ ! -z "$BENCHTIME" ]]; then
+    BENCHTIME="-benchtime=${BENCHTIME}s "
+fi
+bash -c 'source run_setup; cd src/EvLJson; go test '"$BENCHTIME"'-run=XXX -bench=.'

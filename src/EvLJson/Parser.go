@@ -1,597 +1,539 @@
-package main
+package EvLJson
 
 import (
-	"bufio"
-	"io"
-	"log"
-	"net/http"
-	//"fmt"  // DEBUG
-)
-
-/*
-
-Lets assume that there is copper somewhere between the target and us:
-
--
-http://stackoverflow.com/questions/2613734/maximum-packet-size-for-a-tcp-connection
--
-
-The absolute limitation on TCP packet size is 64K (65535 bytes), but in practicality this is far larger than the size of any packet you will see, because the lower layers (e.g. ethernet) have lower packet sizes. The MTU (Maximum Transmission Unit) for Ethernet, for instance, is 1500 bytes.
-
-
-default buffer size as of 7/24/2015:
-
--
-http://golang.org/src/bufio/bufio.go?s=1648:1684#L51
--
-
-const (
-    defaultBufSize = 4096
+    "io"
+    //"fmt"  // DEBUG
 )
 
 
-instagram post size limits:
--
-http://www.jennstrends.com/limits-on-instagram/
--
-2200 characters, possibly 6 byte utf-8 encoding
-
-*/
-
-const TCP_HEADER_SIZE = 40
-const BUFIO_READER_SIZE = 1500 - TCP_HEADER_SIZE // between ( 1024 = 2 ^ 10 ) and ( 2048 = 2 ^ 11 )
-const LITERAL_BUFF_SIZE = 13200                  // 13200 ( 2200 * 6 )
-
 const (
-	OBJ_STR_NULL  = "null"
-	OBJ_STR_TRUE  = "true"
-	OBJ_STR_FALSE = "false"
+    OBJ_STR_NULL  = "null"
+    OBJ_STR_TRUE  = "true"
+    OBJ_STR_FALSE = "false"
 )
 
 type UnspecifiedJsonParseError struct{}
 
 func (err UnspecifiedJsonParseError) Error() string {
-	return "Unspecified json parser error"
+    return "Unspecified json parser error"
 }
 
 var unspecifiedParseError = UnspecifiedJsonParseError{}
 
 const (
-	STATE_UNDEFINED = iota
-	STATE_IN_NULL
-	STATE_IN_TRUE
-	STATE_IN_FALSE
-	STATE_IN_ZERO_OR_DECIMAL_OR_EXPONENT_START
-	STATE_IN_INT
-	STATE_IN_DECIMAL_FRACTIONAL_START
-	STATE_IN_DECIMAL_FRACTIONAL_END
-	STATE_IN_EXPONENT_START
-	STATE_IN_EXPONENT_END
-	STATE_IN_STRING
-	STATE_IN_DICT_EXPECT_FIRST_KEY_OR_END
-	STATE_IN_DICT_EXPECT_KEY_VALUE_DELIM
-	STATE_IN_DICT_EXPECT_VALUE
-	STATE_IN_DICT_EXPECT_ENTRY_DELIM_OR_END
-	STATE_IN_DICT_EXPECT_KEY
-	STATE_IN_ARRAY_EXPECT_FIRST_ENTRY_OR_END
-	STATE_IN_ARRAY_EXPECT_DELIM_OR_END
-	STATE_IN_ARRAY_EXPECT_ENTRY
-	STATE_END
+    STATE_UNDEFINED = iota
+    STATE_IN_NULL
+    STATE_IN_TRUE
+    STATE_IN_FALSE
+    STATE_IN_ZERO_OR_DECIMAL_OR_EXPONENT_START
+    STATE_IN_INT
+    STATE_IN_DECIMAL_FRACTIONAL_START
+    STATE_IN_DECIMAL_FRACTIONAL_END
+    STATE_IN_EXPONENT_START
+    STATE_IN_EXPONENT_END
+    STATE_IN_STRING
+    STATE_IN_DICT_EXPECT_FIRST_KEY_OR_END
+    STATE_IN_DICT_EXPECT_KEY_VALUE_DELIM
+    STATE_IN_DICT_EXPECT_VALUE
+    STATE_IN_DICT_EXPECT_ENTRY_DELIM_OR_END
+    STATE_IN_DICT_EXPECT_KEY
+    STATE_IN_ARRAY_EXPECT_FIRST_ENTRY_OR_END
+    STATE_IN_ARRAY_EXPECT_DELIM_OR_END
+    STATE_IN_ARRAY_EXPECT_ENTRY
+    STATE_END
 )
 
-var PARSER_STATE_ACTION_LOOKUP = []func(p *EvLParser, b byte) bool{
-	handleStart,
-	handleNull,
-	handleTrue,
-	handleFalse,
-	handleZeroOrDecimalOrExponentStart,
-	handleInt,
-	handleDecimalFractionalStart,
-	handleDecimalFractionalEnd,
-	handleExponentStart,
-	handleExponentEnd,
-	handleString,
-	handleDictExpectFirstKeyOrEnd,
-	handleDictExpectKeyValueDelim,
-	handleDictExpectValue,
-	handleDictExpectEntryDelimOrEnd,
-	handleDictExpectKey,
-	handleArrayExpectFirstEntryOrEnd,
-	handleArrayExpectDelimOrEnd,
-	handleArrayExpectEntry,
-	handleEnd,
+var PARSER_STATE_ACTION_LOOKUP = []func(p *Parser, b byte) bool{
+    handleStart,
+    handleNull,
+    handleTrue,
+    handleFalse,
+    handleZeroOrDecimalOrExponentStart,
+    handleInt,
+    handleDecimalFractionalStart,
+    handleDecimalFractionalEnd,
+    handleExponentStart,
+    handleExponentEnd,
+    handleString,
+    handleDictExpectFirstKeyOrEnd,
+    handleDictExpectKeyValueDelim,
+    handleDictExpectValue,
+    handleDictExpectEntryDelimOrEnd,
+    handleDictExpectKey,
+    handleArrayExpectFirstEntryOrEnd,
+    handleArrayExpectDelimOrEnd,
+    handleArrayExpectEntry,
+    handleEnd,
 }
 
 func isCharWhitespace(b byte) bool {
-	switch b {
-	case 0x20: // SPACE
-		fallthrough
-	case 0x09: // TAB
-		fallthrough
-	case 0x0A: // LF
-		fallthrough
-	case 0x0D: // CR
-		return true
-	default:
-		return false
-	}
+    switch b {
+    case 0x20: // SPACE
+        fallthrough
+    case 0x09: // TAB
+        fallthrough
+    case 0x0A: // LF
+        fallthrough
+    case 0x0D: // CR
+        return true
+    default:
+        return false
+    }
 }
 
-func pushState(p *EvLParser, newState uint8) {
-	p.stateStack = append(p.stateStack, p.state)
-	p.state = newState
+func pushState(p *Parser, newState uint8) {
+    p.stateStack = append(p.stateStack, p.state)
+    p.state = newState
 }
 
-func popState(p *EvLParser) {
-	// TODO: experiment with removing the `newMaxIdx` var if this function fails to inline
-	newMaxIdx := len(p.stateStack) - 1
-	p.state, p.stateStack = p.stateStack[newMaxIdx], p.stateStack[:newMaxIdx]
+func popState(p *Parser) {
+    newMaxIdx := len(p.stateStack) - 1
+    p.state, p.stateStack = p.stateStack[newMaxIdx], p.stateStack[:newMaxIdx]
 }
 
-func getNewObjState(p *EvLParser, b byte) uint8 {
-	if b >= '1' && b <= '9' {
-		return STATE_IN_INT
-	}
-	switch b {
-	case '0':
-		return STATE_IN_ZERO_OR_DECIMAL_OR_EXPONENT_START
-	case '[':
-		return STATE_IN_ARRAY_EXPECT_FIRST_ENTRY_OR_END
-	case '{':
-		return STATE_IN_DICT_EXPECT_FIRST_KEY_OR_END
-	case OBJ_STR_NULL[0]:
-		return STATE_IN_NULL
-	case OBJ_STR_FALSE[0]:
-		return STATE_IN_FALSE
-	case OBJ_STR_TRUE[0]:
-		return STATE_IN_TRUE
-	case '"':
-		return STATE_IN_STRING
-	case '-':
-		return STATE_IN_INT
-	default:
-		return STATE_UNDEFINED
-	}
+func getNewObjState(p *Parser, b byte) uint8 {
+    if b >= '1' && b <= '9' {
+        return STATE_IN_INT
+    }
+    switch b {
+    case '0':
+        return STATE_IN_ZERO_OR_DECIMAL_OR_EXPONENT_START
+    case '[':
+        return STATE_IN_ARRAY_EXPECT_FIRST_ENTRY_OR_END
+    case '{':
+        return STATE_IN_DICT_EXPECT_FIRST_KEY_OR_END
+    case OBJ_STR_NULL[0]:
+        return STATE_IN_NULL
+    case OBJ_STR_FALSE[0]:
+        return STATE_IN_FALSE
+    case OBJ_STR_TRUE[0]:
+        return STATE_IN_TRUE
+    case '"':
+        return STATE_IN_STRING
+    case '-':
+        return STATE_IN_INT
+    default:
+        return STATE_UNDEFINED
+    }
 }
 
-func handleIfStartOfNewObj(p *EvLParser, b byte) bool {
-	if newObjState := getNewObjState(p, b); newObjState != STATE_UNDEFINED {
-		pushState(p, newObjState)
-		return true
-	}
-	return false
+func handleIfStartOfNewObj(p *Parser, b byte) bool {
+    if newObjState := getNewObjState(p, b); newObjState != STATE_UNDEFINED {
+        pushState(p, newObjState)
+        return true
+    }
+    return false
 }
 
-func handleStart(p *EvLParser, b byte) bool {
-	if p.allowFreeContextWhitespace {
-		if isCharWhitespace(b) {
-			return true
-		}
-	}
-	p.state = STATE_END
-	if handleIfStartOfNewObj(p, b) {
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleStart(p *Parser, b byte) bool {
+    if p.allowFreeContextWhitespace {
+        if isCharWhitespace(b) {
+            return true
+        }
+    }
+    p.state = STATE_END
+    if handleIfStartOfNewObj(p, b) {
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleNull(p *EvLParser, b byte) bool {
-	if b == OBJ_STR_NULL[p.literalStateIndex] {
-		p.literalStateIndex++
-		if p.literalStateIndex == uint8(len(OBJ_STR_NULL)) {
-			p.literalStateIndex = 1
-			popState(p)
-		}
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleNull(p *Parser, b byte) bool {
+    if b == OBJ_STR_NULL[p.literalStateIndex] {
+        p.literalStateIndex++
+        if p.literalStateIndex == uint8(len(OBJ_STR_NULL)) {
+            p.literalStateIndex = 1
+            popState(p)
+        }
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleTrue(p *EvLParser, b byte) bool {
-	if b == OBJ_STR_TRUE[p.literalStateIndex] {
-		p.literalStateIndex++
-		if p.literalStateIndex == uint8(len(OBJ_STR_TRUE)) {
-			p.literalStateIndex = 1
-			popState(p)
-		}
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleTrue(p *Parser, b byte) bool {
+    if b == OBJ_STR_TRUE[p.literalStateIndex] {
+        p.literalStateIndex++
+        if p.literalStateIndex == uint8(len(OBJ_STR_TRUE)) {
+            p.literalStateIndex = 1
+            popState(p)
+        }
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleFalse(p *EvLParser, b byte) bool {
-	if b == OBJ_STR_FALSE[p.literalStateIndex] {
-		p.literalStateIndex++
-		if p.literalStateIndex == uint8(len(OBJ_STR_FALSE)) {
-			p.literalStateIndex = 1
-			popState(p)
-		}
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleFalse(p *Parser, b byte) bool {
+    if b == OBJ_STR_FALSE[p.literalStateIndex] {
+        p.literalStateIndex++
+        if p.literalStateIndex == uint8(len(OBJ_STR_FALSE)) {
+            p.literalStateIndex = 1
+            popState(p)
+        }
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleZeroOrDecimalOrExponentStart(p *EvLParser, b byte) bool {
-	switch b {
-	case '.':
-		// TODO: negotiate type changing features
-		p.state = STATE_IN_DECIMAL_FRACTIONAL_START
-		return true
-	case 'e':
-		// TODO: negotiate type changing features
-		p.state = STATE_IN_EXPONENT_END
-		return true
-	default:
-		popState(p)
-		return false
-	}
+func handleZeroOrDecimalOrExponentStart(p *Parser, b byte) bool {
+    switch b {
+    case '.':
+        // TODO: negotiate type changing features
+        p.state = STATE_IN_DECIMAL_FRACTIONAL_START
+        return true
+    case 'e':
+        // TODO: negotiate type changing features
+        p.state = STATE_IN_EXPONENT_END
+        return true
+    default:
+        popState(p)
+        return false
+    }
 }
 
-func handleInt(p *EvLParser, b byte) bool {
-	if b >= '0' && b <= '9' {
-		return true
-	}
-	switch b {
-	case '.':
-		// TODO: negotiate type changing features
-		p.state = STATE_IN_DECIMAL_FRACTIONAL_START
-		return true
-	case 'e':
-		// TODO: negotiate type changing features
-		p.state = STATE_IN_EXPONENT_START
-		return true
-	}
-	popState(p)
-	return false
+func handleInt(p *Parser, b byte) bool {
+    if b >= '0' && b <= '9' {
+        return true
+    }
+    switch b {
+    case '.':
+        // TODO: negotiate type changing features
+        p.state = STATE_IN_DECIMAL_FRACTIONAL_START
+        return true
+    case 'e':
+        // TODO: negotiate type changing features
+        p.state = STATE_IN_EXPONENT_START
+        return true
+    }
+    popState(p)
+    return false
 }
 
-func handleDecimalFractionalStart(p *EvLParser, b byte) bool {
-	if b >= '0' && b <= '9' {
-		p.state = STATE_IN_DECIMAL_FRACTIONAL_END
-		return true
-	}
-	popState(p)
-	return false
+func handleDecimalFractionalStart(p *Parser, b byte) bool {
+    if b >= '0' && b <= '9' {
+        p.state = STATE_IN_DECIMAL_FRACTIONAL_END
+        return true
+    }
+    popState(p)
+    return false
 }
 
-func handleDecimalFractionalEnd(p *EvLParser, b byte) bool {
-	switch {
-	case b >= '0' && b <= '9':
-		return true
-	case b == 'e':
-		// TODO: negotiate type changing features
-		p.state = STATE_IN_EXPONENT_START
-		return true
-	}
-	popState(p)
-	return false
+func handleDecimalFractionalEnd(p *Parser, b byte) bool {
+    switch {
+    case b >= '0' && b <= '9':
+        return true
+    case b == 'e':
+        // TODO: negotiate type changing features
+        p.state = STATE_IN_EXPONENT_START
+        return true
+    }
+    popState(p)
+    return false
 }
 
-func handleExponentStart(p *EvLParser, b byte) bool {
-	if b >= '0' && b <= '9' {
-		p.state = STATE_IN_EXPONENT_END
-		return true
-	}
-	if b == '-' {
-		p.state = STATE_IN_EXPONENT_END
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleExponentStart(p *Parser, b byte) bool {
+    if b >= '0' && b <= '9' {
+        p.state = STATE_IN_EXPONENT_END
+        return true
+    }
+    if b == '-' {
+        p.state = STATE_IN_EXPONENT_END
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleExponentEnd(p *EvLParser, b byte) bool {
-	if b >= '0' && b <= '9' {
-		p.state = STATE_IN_EXPONENT_END
-		return true
-	}
-	popState(p)
-	return false
+func handleExponentEnd(p *Parser, b byte) bool {
+    if b >= '0' && b <= '9' {
+        p.state = STATE_IN_EXPONENT_END
+        return true
+    }
+    popState(p)
+    return false
 }
 
-func handleString(p *EvLParser, b byte) bool {
-	if p.stringHexDigitIndex > 0 {
-		p.stringHexDigitIndex++
-		if b >= '0' && b <= '9' {
-			// do nothing
-		} else {
-			if b > 'F' {
-				b -= ('f' - 'F')
-			}
-			if b < 'A' || b > 'F' {
-				p.err = unspecifiedParseError
-				return true
-			}
-		}
-		if p.stringHexDigitIndex == 5 {
-			p.stringHexDigitIndex = 0
-		}
-		return true
-	}
+func handleString(p *Parser, b byte) bool {
+    if p.stringHexDigitIndex > 0 {
+        p.stringHexDigitIndex++
+        if b >= '0' && b <= '9' {
+            // do nothing
+        } else {
+            if b > 'F' {
+                b -= ('f' - 'F')
+            }
+            if b < 'A' || b > 'F' {
+                p.err = unspecifiedParseError
+                return true
+            }
+        }
+        if p.stringHexDigitIndex == 5 {
+            p.stringHexDigitIndex = 0
+        }
+        return true
+    }
 
-	switch b {
-	case 'b':
-		fallthrough
-	case 'f':
-		fallthrough
-	case 'n':
-		fallthrough
-	case 'r':
-		fallthrough
-	case 't':
-		fallthrough
-	case '/':
-		// allowed to be escaped, no special implications
-		p.reverseSolidusParity = false
-		return true
-	case '\\':
-		// reverse solidus (escape) parity adjusted
-		p.reverseSolidusParity = !p.reverseSolidusParity
-		return true
-	case '"':
-		if !p.reverseSolidusParity {
-			// end of string
-			popState(p)
-			return true
-		}
-		p.reverseSolidusParity = false
-		return true
-	case 'u':
-		if p.reverseSolidusParity {
-			p.reverseSolidusParity = false
-			p.stringHexDigitIndex = 1
-		}
-		return true
-	default:
-		if p.reverseSolidusParity {
-			p.err = unspecifiedParseError
-		}
-		return true
-	}
+    switch b {
+    case 'b':
+        fallthrough
+    case 'f':
+        fallthrough
+    case 'n':
+        fallthrough
+    case 'r':
+        fallthrough
+    case 't':
+        fallthrough
+    case '/':
+        // allowed to be escaped, no special implications
+        p.reverseSolidusParity = false
+        return true
+    case '\\':
+        // reverse solidus (escape) parity adjusted
+        p.reverseSolidusParity = !p.reverseSolidusParity
+        return true
+    case '"':
+        if !p.reverseSolidusParity {
+            // end of string
+            popState(p)
+            return true
+        }
+        p.reverseSolidusParity = false
+        return true
+    case 'u':
+        if p.reverseSolidusParity {
+            p.reverseSolidusParity = false
+            p.stringHexDigitIndex = 1
+        }
+        return true
+    default:
+        if p.reverseSolidusParity {
+            p.err = unspecifiedParseError
+        }
+        return true
+    }
 }
 
-func handleDictExpectFirstKeyOrEnd(p *EvLParser, b byte) bool {
-	if p.allowFreeContextWhitespace {
-		if isCharWhitespace(b) {
-			return true
-		}
-	}
-	switch b {
-	case '"':
-		p.state = STATE_IN_DICT_EXPECT_KEY_VALUE_DELIM
-		pushState(p, STATE_IN_STRING)
-		return true
-	case '}':
-		popState(p)
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleDictExpectFirstKeyOrEnd(p *Parser, b byte) bool {
+    if p.allowFreeContextWhitespace {
+        if isCharWhitespace(b) {
+            return true
+        }
+    }
+    switch b {
+    case '"':
+        p.state = STATE_IN_DICT_EXPECT_KEY_VALUE_DELIM
+        pushState(p, STATE_IN_STRING)
+        return true
+    case '}':
+        popState(p)
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleDictExpectKeyValueDelim(p *EvLParser, b byte) bool {
-	if p.allowFreeContextWhitespace {
-		if isCharWhitespace(b) {
-			return true
-		}
-	}
-	if b == ':' {
-		p.state = STATE_IN_DICT_EXPECT_VALUE
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleDictExpectKeyValueDelim(p *Parser, b byte) bool {
+    if p.allowFreeContextWhitespace {
+        if isCharWhitespace(b) {
+            return true
+        }
+    }
+    if b == ':' {
+        p.state = STATE_IN_DICT_EXPECT_VALUE
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleDictExpectValue(p *EvLParser, b byte) bool {
-	if p.allowFreeContextWhitespace {
-		if isCharWhitespace(b) {
-			return true
-		}
-	}
-	if newObjState := getNewObjState(p, b); newObjState != STATE_UNDEFINED {
-		p.state = STATE_IN_DICT_EXPECT_ENTRY_DELIM_OR_END
-		pushState(p, newObjState)
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleDictExpectValue(p *Parser, b byte) bool {
+    if p.allowFreeContextWhitespace {
+        if isCharWhitespace(b) {
+            return true
+        }
+    }
+    if newObjState := getNewObjState(p, b); newObjState != STATE_UNDEFINED {
+        p.state = STATE_IN_DICT_EXPECT_ENTRY_DELIM_OR_END
+        pushState(p, newObjState)
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleDictExpectEntryDelimOrEnd(p *EvLParser, b byte) bool {
-	if p.allowFreeContextWhitespace {
-		if isCharWhitespace(b) {
-			return true
-		}
-	}
-	switch b {
-	case ',':
-		p.state = STATE_IN_DICT_EXPECT_KEY
-		return true
-	case '}':
-		popState(p)
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleDictExpectEntryDelimOrEnd(p *Parser, b byte) bool {
+    if p.allowFreeContextWhitespace {
+        if isCharWhitespace(b) {
+            return true
+        }
+    }
+    switch b {
+    case ',':
+        p.state = STATE_IN_DICT_EXPECT_KEY
+        return true
+    case '}':
+        popState(p)
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleDictExpectKey(p *EvLParser, b byte) bool {
-	if p.allowFreeContextWhitespace {
-		if isCharWhitespace(b) {
-			return true
-		}
-	}
-	if b == '"' {
-		p.state = STATE_IN_DICT_EXPECT_KEY_VALUE_DELIM
-		pushState(p, STATE_IN_STRING)
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleDictExpectKey(p *Parser, b byte) bool {
+    if p.allowFreeContextWhitespace {
+        if isCharWhitespace(b) {
+            return true
+        }
+    }
+    if b == '"' {
+        p.state = STATE_IN_DICT_EXPECT_KEY_VALUE_DELIM
+        pushState(p, STATE_IN_STRING)
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleArrayExpectFirstEntryOrEnd(p *EvLParser, b byte) bool {
-	if p.allowFreeContextWhitespace {
-		if isCharWhitespace(b) {
-			return true
-		}
-	}
-	if b == ']' {
-		popState(p)
-		return true
-	}
-	if newObjState := getNewObjState(p, b); newObjState != STATE_UNDEFINED {
-		p.state = STATE_IN_ARRAY_EXPECT_DELIM_OR_END
-		pushState(p, newObjState)
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleArrayExpectFirstEntryOrEnd(p *Parser, b byte) bool {
+    if p.allowFreeContextWhitespace {
+        if isCharWhitespace(b) {
+            return true
+        }
+    }
+    if b == ']' {
+        popState(p)
+        return true
+    }
+    if newObjState := getNewObjState(p, b); newObjState != STATE_UNDEFINED {
+        p.state = STATE_IN_ARRAY_EXPECT_DELIM_OR_END
+        pushState(p, newObjState)
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleArrayExpectDelimOrEnd(p *EvLParser, b byte) bool {
-	if p.allowFreeContextWhitespace {
-		if isCharWhitespace(b) {
-			return true
-		}
-	}
-	switch b {
-	case ',':
-		p.state = STATE_IN_ARRAY_EXPECT_ENTRY
-		return true
-	case ']':
-		popState(p)
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleArrayExpectDelimOrEnd(p *Parser, b byte) bool {
+    if p.allowFreeContextWhitespace {
+        if isCharWhitespace(b) {
+            return true
+        }
+    }
+    switch b {
+    case ',':
+        p.state = STATE_IN_ARRAY_EXPECT_ENTRY
+        return true
+    case ']':
+        popState(p)
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleArrayExpectEntry(p *EvLParser, b byte) bool {
-	if p.allowFreeContextWhitespace {
-		if isCharWhitespace(b) {
-			return true
-		}
-	}
-	if newObjState := getNewObjState(p, b); newObjState != STATE_UNDEFINED {
-		p.state = STATE_IN_ARRAY_EXPECT_DELIM_OR_END
-		pushState(p, newObjState)
-		return true
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleArrayExpectEntry(p *Parser, b byte) bool {
+    if p.allowFreeContextWhitespace {
+        if isCharWhitespace(b) {
+            return true
+        }
+    }
+    if newObjState := getNewObjState(p, b); newObjState != STATE_UNDEFINED {
+        p.state = STATE_IN_ARRAY_EXPECT_DELIM_OR_END
+        pushState(p, newObjState)
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func handleEnd(p *EvLParser, b byte) bool {
-	if p.allowFreeContextWhitespace {
-		if isCharWhitespace(b) {
-			return true
-		}
-	}
-	p.err = unspecifiedParseError
-	return true
+func handleEnd(p *Parser, b byte) bool {
+    if p.allowFreeContextWhitespace {
+        if isCharWhitespace(b) {
+            return true
+        }
+    }
+    p.err = unspecifiedParseError
+    return true
 }
 
-func (p *EvLParser) Parse(bufferedReader *bufio.Reader) error {
-	singleByte, err := bufferedReader.ReadByte()
-	if err != nil {
-		return err
-	}
+func (p *Parser) Parse(byteReader io.ByteReader) error {
+    singleByte, err := byteReader.ReadByte()
 
-	/*
-	   debugOldState := uint8(STATE_UNDEFINED)
-	   debugOldDepth := 0
+    // locality of reference using slices increases throughput
+    parserStateActionLookup := PARSER_STATE_ACTION_LOOKUP[:]
 
-	   debugFunc := func() {
-	       newState := uint8(p.state)
-	       newDepth := len(p.stateStack)
-	       if debugOldState != newState || newDepth != debugOldDepth {
-	           fmt.Printf("\n\nSTATE_SHIFT:  Depth(%d => %d)  State(%d => %d)\n\n", debugOldDepth, newDepth, debugOldState, newState)
-	           debugOldState = newState
-	           debugOldDepth = newDepth
-	       }
-	   }
-	*/
+    /*
+    debugOldState := uint8(STATE_UNDEFINED)
+    debugOldDepth := 0
 
-	for err == nil {
-		//fmt.Printf("%s", string(singleByte))  // DEBUG
-		for !PARSER_STATE_ACTION_LOOKUP[p.state](p, singleByte) {
-			//debugFunc()
-		}
-		//debugFunc()
-		err = p.err
-		if err == nil {
-			singleByte, err = bufferedReader.ReadByte()
-		}
-	}
+    debugFunc := func() {
+        newState := uint8(p.state)
+        newDepth := len(p.stateStack)
+        if debugOldState != newState || newDepth != debugOldDepth {
+            fmt.Printf("\n\nSTATE_SHIFT:  Depth(%d => %d)  State(%d => %d)\n\n", debugOldDepth, newDepth, debugOldState, newState)
+            debugOldState = newState
+            debugOldDepth = newDepth
+        }
+    }
+    */
 
-	/*
-	   if p.state != STATE_END && err != nil {
-	       fmt.Printf("\n\n")
-	       fmt.Printf("End of stream while in state: %d\n", p.state)
-	       fmt.Printf("Stack size: %d\n", len(p.stateStack))
-	   }
-	*/
+    for err == nil {
+        //fmt.Printf("%s", string(singleByte))  // DEBUG
+        for !parserStateActionLookup[p.state](p, singleByte) {
+            //debugFunc()
+        }
+        //debugFunc()
+        err = p.err
+        if err == nil {
+            singleByte, err = byteReader.ReadByte()
+        }
+    }
 
-	if p.state != STATE_END || err != io.EOF {
-		return err
-	}
+    /*
+       if p.state != STATE_END && err != nil {
+           fmt.Printf("\n\n")
+           fmt.Printf("End of stream while in state: %d\n", p.state)
+           fmt.Printf("Stack size: %d\n", len(p.stateStack))
+       }
+    */
 
-	return nil
+    if p.state != STATE_END || err != io.EOF {
+        return err
+    }
+
+    return nil
 }
 
-type EvLParser struct {
-	state                      uint8
-	literalStateIndex          uint8
-	stringHexDigitIndex        uint8
-	stateStack                 []uint8
-	err                        error
-	reverseSolidusParity       bool
-	allowFreeContextWhitespace bool
-	//literalBuffer [LITERAL_BUFF_SIZE]byte
+type Parser struct {
+    state                      uint8
+    literalStateIndex          uint8
+    stringHexDigitIndex        uint8
+    stateStack                 []uint8
+    err                        error
+    reverseSolidusParity       bool
+    allowFreeContextWhitespace bool
 }
 
 const (
-	OPT_IGNORE_EXTRA_KEYS              = 0x01
-	OPT_EXPECT_NO_FREE_FORM_WHITESPACE = 0x02
+    OPT_IGNORE_EXTRA_KEYS              = 0x01
+    OPT_EXPECT_NO_FREE_FORM_WHITESPACE = 0x02
 )
 
 // TODO: support config options
-func NewEvLParser() EvLParser {
-	return EvLParser{
-		reverseSolidusParity: false,
-		stringHexDigitIndex:  0,
-		// minimum nominal case will require 3 state levels
-		// TODO: allow for configuring this size parameter
-		stateStack:        []uint8{0, 0, 0},
-		literalStateIndex: 1,
-		state:             STATE_UNDEFINED,
-		err:               nil,
-		allowFreeContextWhitespace: false,
-	}
-}
-
-func main() {
-
-	httpResponse, err := http.Get("http://127.0.0.1:8080")
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	bufferedReader := bufio.NewReaderSize(httpResponse.Body, BUFIO_READER_SIZE)
-	evLParser := NewEvLParser()
-
-	err = evLParser.Parse(bufferedReader)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	defer httpResponse.Body.Close()
+func NewParser() Parser {
+    return Parser{
+        reverseSolidusParity: false,
+        stringHexDigitIndex:  0,
+        // minimum nominal case will require 3 state levels
+        // TODO: allow for configuring this size parameter
+        stateStack:        []uint8{0, 0, 0},
+        literalStateIndex: 1,
+        state:             STATE_UNDEFINED,
+        err:               nil,
+        allowFreeContextWhitespace: false,
+    }
 }
