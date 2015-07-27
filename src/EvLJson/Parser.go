@@ -3,6 +3,7 @@ package EvLJson
 import (
     "io"
     //"fmt"  // DEBUG
+    //"log"  // DEBUG
 )
 
 
@@ -27,9 +28,11 @@ const (
     STATE_IN_FALSE
     STATE_IN_ZERO_OR_DECIMAL_OR_EXPONENT_START
     STATE_IN_INT
+    STATE_IN_INT_EXPECT_FIRST_DIGIT_NON_ZERO
     STATE_IN_DECIMAL_FRACTIONAL_START
     STATE_IN_DECIMAL_FRACTIONAL_END
     STATE_IN_EXPONENT_START
+    STATE_IN_EXPONENT_LEADING_ZERO
     STATE_IN_EXPONENT_END
     STATE_IN_STRING
     STATE_IN_DICT_EXPECT_FIRST_KEY_OR_END
@@ -50,9 +53,11 @@ var PARSER_STATE_ACTION_LOOKUP = []func(p *Parser, b byte) bool{
     handleFalse,
     handleZeroOrDecimalOrExponentStart,
     handleInt,
+    handleIntExpectFirstDigitNonZero,
     handleDecimalFractionalStart,
     handleDecimalFractionalEnd,
     handleExponentStart,
+    handleExponentLeadingZero,
     handleExponentEnd,
     handleString,
     handleDictExpectFirstKeyOrEnd,
@@ -111,7 +116,7 @@ func getNewObjState(p *Parser, b byte) uint8 {
     case '"':
         return STATE_IN_STRING
     case '-':
-        return STATE_IN_INT
+        return STATE_IN_INT_EXPECT_FIRST_DIGIT_NON_ZERO
     default:
         return STATE_UNDEFINED
     }
@@ -212,6 +217,15 @@ func handleInt(p *Parser, b byte) bool {
     return false
 }
 
+func handleIntExpectFirstDigitNonZero(p *Parser, b byte) bool {
+    if b >= '1' && b <= '9' {
+        p.state = STATE_IN_INT
+        return true
+    }
+    p.err = unspecifiedParseError
+    return true
+}
+
 func handleDecimalFractionalStart(p *Parser, b byte) bool {
     if b >= '0' && b <= '9' {
         p.state = STATE_IN_DECIMAL_FRACTIONAL_END
@@ -235,8 +249,12 @@ func handleDecimalFractionalEnd(p *Parser, b byte) bool {
 }
 
 func handleExponentStart(p *Parser, b byte) bool {
-    if b >= '0' && b <= '9' {
+    if b >= '1' && b <= '9' {
         p.state = STATE_IN_EXPONENT_END
+        return true
+    }
+    if b == '0' {
+        p.state = STATE_IN_EXPONENT_LEADING_ZERO
         return true
     }
     if b == '-' {
@@ -247,9 +265,22 @@ func handleExponentStart(p *Parser, b byte) bool {
     return true
 }
 
+func handleExponentLeadingZero(p *Parser, b byte) bool {
+    if b >= '1' && b <= '9' {
+        p.state = STATE_IN_EXPONENT_END
+        return true
+    }
+    if b == '0' {
+        return true
+    }
+    // TODO: exponent only had /0+/ for the exponent
+    // signal this if it is important
+    popState(p)
+    return false
+}
+
 func handleExponentEnd(p *Parser, b byte) bool {
     if b >= '0' && b <= '9' {
-        p.state = STATE_IN_EXPONENT_END
         return true
     }
     popState(p)
