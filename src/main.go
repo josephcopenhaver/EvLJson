@@ -1,13 +1,12 @@
 package main
 
 import (
-    "bufio"
-    "log"
-    "net/http"
-    //"fmt"  // DEBUG
-    "EvLJson"
+	"bufio"
+	"log"
+	"net/http"
+	//"fmt"  // DEBUG
+	"EvLJson"
 )
-
 
 /*
 
@@ -43,23 +42,22 @@ const TCP_HEADER_SIZE = 40
 const BUFIO_READER_SIZE = 1500 - TCP_HEADER_SIZE // between ( 1024 = 2 ^ 10 ) and ( 2048 = 2 ^ 11 )
 const LITERAL_BUFF_SIZE = 13200                  // 13200 ( 2200 * 6 )
 
-
 func main() {
 
-    httpResponse, err := http.Get("http://127.0.0.1:8080")
+	httpResponse, err := http.Get("http://127.0.0.1:8080")
 
-    if err != nil {
-        log.Fatal(err)
-    }
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    bufferedReader := bufio.NewReaderSize(httpResponse.Body, BUFIO_READER_SIZE)
-    evLJsonParser := EvLJson.NewParser()
+	bufferedReader := bufio.NewReaderSize(httpResponse.Body, BUFIO_READER_SIZE)
+	evLJsonParser := EvLJson.NewParser()
 
-    err = evLJsonParser.Parse(bufferedReader)
+	err = evLJsonParser.Parse(bufferedReader)
 
-    if err != nil {
-        log.Fatal(err)
-    }
+	if err != nil {
+		log.Fatal(err)
+	}
 
-    defer httpResponse.Body.Close()
+	defer httpResponse.Body.Close()
 }
