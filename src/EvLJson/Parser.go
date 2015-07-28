@@ -71,7 +71,7 @@ func getNewValueHandle(b byte) func(p *Parser, b byte) uint8 {
 	case '"':
 		return handleString
 	case '-':
-		return handleIntExpectFirstDigitNonZero
+		return handleZeroOrDecimalOrExponentNegativeStart
 	default:
 		return nil
 	}
@@ -169,7 +169,11 @@ func handleInt(p *Parser, b byte) uint8 {
 	return SIG_REUSE_BYTE
 }
 
-func handleIntExpectFirstDigitNonZero(p *Parser, b byte) uint8 {
+func handleZeroOrDecimalOrExponentNegativeStart(p *Parser, b byte) uint8 {
+	if b == '0' {
+		p.handle = handleZeroOrDecimalOrExponentStart
+		return SIG_NEXT_BYTE
+	}
 	if b >= '1' && b <= '9' {
 		p.handle = handleInt
 		return SIG_NEXT_BYTE
