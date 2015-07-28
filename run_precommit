@@ -1,0 +1,2 @@
+#!/bin/bash
+bash -c 'set -e; for file in $(find . -type f -regex .*\.go -print); do echo "$file"; gofmt -w -e "$file"; done'

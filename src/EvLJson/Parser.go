@@ -51,7 +51,7 @@ func popHandle(p *Parser) {
 	p.handle, p.handleStack = p.handleStack[newMaxIdx], p.handleStack[:newMaxIdx]
 }
 
-func getNewValueHandle(p *Parser, b byte) func(p *Parser, b byte) uint8 {
+func getNewValueHandle(b byte) func(p *Parser, b byte) uint8 {
 	if b >= '1' && b <= '9' {
 		return handleInt
 	}
@@ -357,7 +357,7 @@ func handleDictExpectValue(p *Parser, b byte) uint8 {
 			return SIG_NEXT_BYTE
 		}
 	}
-	if newHandle := getNewValueHandle(p, b); newHandle != nil {
+	if newHandle := getNewValueHandle(b); newHandle != nil {
 		p.handle = handleDictExpectEntryDelimOrEnd
 		pushHandle(p, newHandle)
 		return SIG_NEXT_BYTE
@@ -409,7 +409,7 @@ func handleArrayExpectFirstEntryOrEnd(p *Parser, b byte) uint8 {
 		popHandle(p)
 		return SIG_NEXT_BYTE
 	}
-	if newHandle := getNewValueHandle(p, b); newHandle != nil {
+	if newHandle := getNewValueHandle(b); newHandle != nil {
 		p.handle = handleArrayExpectDelimOrEnd
 		pushHandle(p, newHandle)
 		return SIG_NEXT_BYTE
@@ -442,7 +442,7 @@ func handleArrayExpectEntry(p *Parser, b byte) uint8 {
 			return SIG_NEXT_BYTE
 		}
 	}
-	if newHandle := getNewValueHandle(p, b); newHandle != nil {
+	if newHandle := getNewValueHandle(b); newHandle != nil {
 		p.handle = handleArrayExpectDelimOrEnd
 		pushHandle(p, newHandle)
 		return SIG_NEXT_BYTE
