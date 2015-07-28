@@ -8,15 +8,15 @@ import (
 
 
 const (
-    SIG_USE_NEXT_BYTE = iota
-    SIG_REUSE_LAST_BYTE
+    SIG_NEXT_BYTE = iota
+    SIG_REUSE_BYTE
     SIG_EOF
     SIG_ERR
 )
 const (
-    OBJ_STR_NULL  = "null"
-    OBJ_STR_TRUE  = "true"
-    OBJ_STR_FALSE = "false"
+    VALUE_STR_NULL  = "null"
+    VALUE_STR_TRUE  = "true"
+    VALUE_STR_FALSE = "false"
 )
 
 type UnspecifiedJsonParseError struct{}
@@ -42,20 +42,17 @@ func isCharWhitespace(b byte) bool {
     }
 }
 
-func pushState(p *Parser, newHandle func(p *Parser, b byte) uint8) {
+func pushHandle(p *Parser, newHandle func(p *Parser, b byte) uint8) {
     p.handleStack = append(p.handleStack, p.handle)
     p.handle = newHandle
 }
 
-func popState(p *Parser) {
+func popHandle(p *Parser) {
     newMaxIdx := len(p.handleStack) - 1
     p.handle, p.handleStack = p.handleStack[newMaxIdx], p.handleStack[:newMaxIdx]
 }
 
-// TODO: rename `newObjState` to `newHandle`
-
-// TODO: rename ...NewValueHandle
-func getNewObjState(p *Parser, b byte) func(p *Parser, b byte) uint8 {
+func getNewValueHandle(p *Parser, b byte) func(p *Parser, b byte) uint8 {
     if b >= '1' && b <= '9' {
         return handleInt
     }
@@ -66,11 +63,11 @@ func getNewObjState(p *Parser, b byte) func(p *Parser, b byte) uint8 {
         return handleArrayExpectFirstEntryOrEnd
     case '{':
         return handleDictExpectFirstKeyOrEnd
-    case OBJ_STR_NULL[0]:
+    case VALUE_STR_NULL[0]:
         return handleNull
-    case OBJ_STR_FALSE[0]:
+    case VALUE_STR_FALSE[0]:
         return handleFalse
-    case OBJ_STR_TRUE[0]:
+    case VALUE_STR_TRUE[0]:
         return handleTrue
     case '"':
         return handleString
@@ -81,63 +78,62 @@ func getNewObjState(p *Parser, b byte) func(p *Parser, b byte) uint8 {
     }
 }
 
-func signalUnspecifiedParseError(p *Parser) uint8 {
-    p.err = unspecifiedParseError
-    return SIG_ERR
-}
-
 func handleStart(p *Parser, b byte) uint8 {
     if p.allowFreeContextWhitespace {
         if isCharWhitespace(b) {
-            return SIG_USE_NEXT_BYTE
+            return SIG_NEXT_BYTE
         }
     }
     p.handle = handleEnd
     if b == '[' {
-        pushState(p, handleArrayExpectFirstEntryOrEnd)
-        return SIG_USE_NEXT_BYTE
+        pushHandle(p, handleArrayExpectFirstEntryOrEnd)
+        return SIG_NEXT_BYTE
     }
     if b == '{' {
-        pushState(p, handleDictExpectFirstKeyOrEnd)
-        return SIG_USE_NEXT_BYTE
+        pushHandle(p, handleDictExpectFirstKeyOrEnd)
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleNull(p *Parser, b byte) uint8 {
-    if b == OBJ_STR_NULL[p.literalStateIndex] {
+    if b == VALUE_STR_NULL[p.literalStateIndex] {
         p.literalStateIndex++
-        if p.literalStateIndex == uint8(len(OBJ_STR_NULL)) {
+        if p.literalStateIndex == uint8(len(VALUE_STR_NULL)) {
             p.literalStateIndex = 1
-            popState(p)
+            popHandle(p)
         }
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleTrue(p *Parser, b byte) uint8 {
-    if b == OBJ_STR_TRUE[p.literalStateIndex] {
+    if b == VALUE_STR_TRUE[p.literalStateIndex] {
         p.literalStateIndex++
-        if p.literalStateIndex == uint8(len(OBJ_STR_TRUE)) {
+        if p.literalStateIndex == uint8(len(VALUE_STR_TRUE)) {
             p.literalStateIndex = 1
-            popState(p)
+            popHandle(p)
         }
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleFalse(p *Parser, b byte) uint8 {
-    if b == OBJ_STR_FALSE[p.literalStateIndex] {
+    if b == VALUE_STR_FALSE[p.literalStateIndex] {
         p.literalStateIndex++
-        if p.literalStateIndex == uint8(len(OBJ_STR_FALSE)) {
+        if p.literalStateIndex == uint8(len(VALUE_STR_FALSE)) {
             p.literalStateIndex = 1
-            popState(p)
+            popHandle(p)
         }
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleZeroOrDecimalOrExponentStart(p *Parser, b byte) uint8 {
@@ -145,113 +141,116 @@ func handleZeroOrDecimalOrExponentStart(p *Parser, b byte) uint8 {
     case '.':
         // TODO: negotiate type changing features
         p.handle = handleDecimalFractionalStart
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     case 'e':
         // TODO: negotiate type changing features
-        p.handle = handleExponentStart
-        return SIG_USE_NEXT_BYTE
+        p.handle = handleExponentCoefficientStart
+        return SIG_NEXT_BYTE
     default:
-        popState(p)
-        return SIG_REUSE_LAST_BYTE
+        popHandle(p)
+        return SIG_REUSE_BYTE
     }
 }
 
 func handleInt(p *Parser, b byte) uint8 {
     if b >= '0' && b <= '9' {
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     }
     switch b {
     case '.':
         // TODO: negotiate type changing features
         p.handle = handleDecimalFractionalStart
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     case 'e':
         // TODO: negotiate type changing features
-        p.handle = handleExponentStart
-        return SIG_USE_NEXT_BYTE
+        p.handle = handleExponentCoefficientStart
+        return SIG_NEXT_BYTE
     }
-    popState(p)
-    return SIG_REUSE_LAST_BYTE
+    popHandle(p)
+    return SIG_REUSE_BYTE
 }
 
 func handleIntExpectFirstDigitNonZero(p *Parser, b byte) uint8 {
     if b >= '1' && b <= '9' {
         p.handle = handleInt
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleDecimalFractionalStart(p *Parser, b byte) uint8 {
     if b >= '0' && b <= '9' {
         p.handle = handleDecimalFractionalEnd
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     }
-    popState(p)
-    return SIG_REUSE_LAST_BYTE
+    popHandle(p)
+    return SIG_REUSE_BYTE
 }
 
 func handleDecimalFractionalEnd(p *Parser, b byte) uint8 {
     switch {
     case b >= '0' && b <= '9':
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     case b == 'e':
         // TODO: negotiate type changing features
-        p.handle = handleExponentStart
-        return SIG_USE_NEXT_BYTE
+        p.handle = handleExponentCoefficientStart
+        return SIG_NEXT_BYTE
     }
-    popState(p)
-    return SIG_REUSE_LAST_BYTE
+    popHandle(p)
+    return SIG_REUSE_BYTE
 }
 
-func handleExponentStart(p *Parser, b byte) uint8 {
+func handleExponentCoefficientStart(p *Parser, b byte) uint8 {
     if b >= '1' && b <= '9' {
-        p.handle = handleExponentEnd
-        return SIG_USE_NEXT_BYTE
+        p.handle = handleExponentCoefficientEnd
+        return SIG_NEXT_BYTE
     }
     if b == '0' {
-        p.handle = handleExponentLeadingZero
-        return SIG_USE_NEXT_BYTE
+        p.handle = handleExponentCoefficientLeadingZero
+        return SIG_NEXT_BYTE
     }
     if b == '-' {
-        p.handle = handleExponentAfterMultSign
-        return SIG_USE_NEXT_BYTE
+        p.handle = handleExponentCoefficientNegative
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
-func handleExponentAfterMultSign(p *Parser, b byte) uint8 {
+func handleExponentCoefficientNegative(p *Parser, b byte) uint8 {
     if b >= '1' && b <= '9' {
-        p.handle = handleExponentEnd
-        return SIG_USE_NEXT_BYTE
+        p.handle = handleExponentCoefficientEnd
+        return SIG_NEXT_BYTE
     }
     if b == '0' {
-        p.handle = handleExponentLeadingZero
-        return SIG_USE_NEXT_BYTE
+        p.handle = handleExponentCoefficientLeadingZero
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
-func handleExponentLeadingZero(p *Parser, b byte) uint8 {
+func handleExponentCoefficientLeadingZero(p *Parser, b byte) uint8 {
     if b >= '1' && b <= '9' {
-        p.handle = handleExponentEnd
-        return SIG_USE_NEXT_BYTE
+        p.handle = handleExponentCoefficientEnd
+        return SIG_NEXT_BYTE
     }
     if b == '0' {
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     }
     // TODO: exponent only had /0+/ for the exponent
     // signal this if it is important
-    popState(p)
-    return SIG_REUSE_LAST_BYTE
+    popHandle(p)
+    return SIG_REUSE_BYTE
 }
 
-func handleExponentEnd(p *Parser, b byte) uint8 {
+func handleExponentCoefficientEnd(p *Parser, b byte) uint8 {
     if b >= '0' && b <= '9' {
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     }
-    popState(p)
-    return SIG_REUSE_LAST_BYTE
+    popHandle(p)
+    return SIG_REUSE_BYTE
 }
 
 func handleString(p *Parser, b byte) uint8 {
@@ -266,7 +265,8 @@ func handleString(p *Parser, b byte) uint8 {
             if b >= 'a' && b <= 'f' {
                 // do nothing
             } else {
-                return signalUnspecifiedParseError(p)
+                p.err = unspecifiedParseError
+                return SIG_ERR
             }
         }
         if stringHexDigitIndex == 4 {
@@ -274,7 +274,7 @@ func handleString(p *Parser, b byte) uint8 {
         } else {
             p.stringHexDigitIndex = stringHexDigitIndex + 1
         }
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     }
 
     switch b {
@@ -291,163 +291,173 @@ func handleString(p *Parser, b byte) uint8 {
     case '/':
         // allowed to be escaped, no special implications
         p.reverseSolidusParity = false
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     case '\\':
         // reverse solidus (escape) parity adjusted
         p.reverseSolidusParity = !p.reverseSolidusParity
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     case '"':
         if !p.reverseSolidusParity {
             // end of string
-            popState(p)
-            return SIG_USE_NEXT_BYTE
+            popHandle(p)
+            return SIG_NEXT_BYTE
         }
         p.reverseSolidusParity = false
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     case 'u':
         if p.reverseSolidusParity {
             p.reverseSolidusParity = false
             p.stringHexDigitIndex = 1
         }
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     default:
         if !p.reverseSolidusParity {
-            return SIG_USE_NEXT_BYTE
+            return SIG_NEXT_BYTE
         }
-        return signalUnspecifiedParseError(p)
+        p.err = unspecifiedParseError
+        return SIG_ERR
     }
 }
 
 func handleDictExpectFirstKeyOrEnd(p *Parser, b byte) uint8 {
     if p.allowFreeContextWhitespace {
         if isCharWhitespace(b) {
-            return SIG_USE_NEXT_BYTE
+            return SIG_NEXT_BYTE
         }
     }
     switch b {
     case '"':
         p.handle = handleDictExpectKeyValueDelim
-        pushState(p, handleString)
-        return SIG_USE_NEXT_BYTE
+        pushHandle(p, handleString)
+        return SIG_NEXT_BYTE
     case '}':
-        popState(p)
-        return SIG_USE_NEXT_BYTE
+        popHandle(p)
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleDictExpectKeyValueDelim(p *Parser, b byte) uint8 {
     if p.allowFreeContextWhitespace {
         if isCharWhitespace(b) {
-            return SIG_USE_NEXT_BYTE
+            return SIG_NEXT_BYTE
         }
     }
     if b == ':' {
         p.handle = handleDictExpectValue
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleDictExpectValue(p *Parser, b byte) uint8 {
     if p.allowFreeContextWhitespace {
         if isCharWhitespace(b) {
-            return SIG_USE_NEXT_BYTE
+            return SIG_NEXT_BYTE
         }
     }
-    if newObjState := getNewObjState(p, b); newObjState != nil {
+    if newHandle := getNewValueHandle(p, b); newHandle != nil {
         p.handle = handleDictExpectEntryDelimOrEnd
-        pushState(p, newObjState)
-        return SIG_USE_NEXT_BYTE
+        pushHandle(p, newHandle)
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleDictExpectEntryDelimOrEnd(p *Parser, b byte) uint8 {
     if p.allowFreeContextWhitespace {
         if isCharWhitespace(b) {
-            return SIG_USE_NEXT_BYTE
+            return SIG_NEXT_BYTE
         }
     }
     switch b {
     case ',':
         p.handle = handleDictExpectKey
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     case '}':
-        popState(p)
-        return SIG_USE_NEXT_BYTE
+        popHandle(p)
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleDictExpectKey(p *Parser, b byte) uint8 {
     if p.allowFreeContextWhitespace {
         if isCharWhitespace(b) {
-            return SIG_USE_NEXT_BYTE
+            return SIG_NEXT_BYTE
         }
     }
     if b == '"' {
         p.handle = handleDictExpectKeyValueDelim
-        pushState(p, handleString)
-        return SIG_USE_NEXT_BYTE
+        pushHandle(p, handleString)
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleArrayExpectFirstEntryOrEnd(p *Parser, b byte) uint8 {
     if p.allowFreeContextWhitespace {
         if isCharWhitespace(b) {
-            return SIG_USE_NEXT_BYTE
+            return SIG_NEXT_BYTE
         }
     }
     if b == ']' {
-        popState(p)
-        return SIG_USE_NEXT_BYTE
+        popHandle(p)
+        return SIG_NEXT_BYTE
     }
-    if newObjState := getNewObjState(p, b); newObjState != nil {
+    if newHandle := getNewValueHandle(p, b); newHandle != nil {
         p.handle = handleArrayExpectDelimOrEnd
-        pushState(p, newObjState)
-        return SIG_USE_NEXT_BYTE
+        pushHandle(p, newHandle)
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleArrayExpectDelimOrEnd(p *Parser, b byte) uint8 {
     if p.allowFreeContextWhitespace {
         if isCharWhitespace(b) {
-            return SIG_USE_NEXT_BYTE
+            return SIG_NEXT_BYTE
         }
     }
     switch b {
     case ',':
         p.handle = handleArrayExpectEntry
-        return SIG_USE_NEXT_BYTE
+        return SIG_NEXT_BYTE
     case ']':
-        popState(p)
-        return SIG_USE_NEXT_BYTE
+        popHandle(p)
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleArrayExpectEntry(p *Parser, b byte) uint8 {
     if p.allowFreeContextWhitespace {
         if isCharWhitespace(b) {
-            return SIG_USE_NEXT_BYTE
+            return SIG_NEXT_BYTE
         }
     }
-    if newObjState := getNewObjState(p, b); newObjState != nil {
+    if newHandle := getNewValueHandle(p, b); newHandle != nil {
         p.handle = handleArrayExpectDelimOrEnd
-        pushState(p, newObjState)
-        return SIG_USE_NEXT_BYTE
+        pushHandle(p, newHandle)
+        return SIG_NEXT_BYTE
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func handleEnd(p *Parser, b byte) uint8 {
     if p.allowFreeContextWhitespace && isCharWhitespace(b) {
         return SIG_EOF
     }
-    return signalUnspecifiedParseError(p)
+    p.err = unspecifiedParseError
+    return SIG_ERR
 }
 
 func (p *Parser) Parse(byteReader io.ByteReader) error {
@@ -459,16 +469,16 @@ func (p *Parser) Parse(byteReader io.ByteReader) error {
     PARSE_LOOP:
     //fmt.Printf("%s", string(singleByte))  // DEBUG
     sig := p.handle(p, singleByte)
-    if sig == SIG_USE_NEXT_BYTE {
+    if sig == SIG_NEXT_BYTE {
         singleByte, err = byteReader.ReadByte()
-        if err != nil {
-            if err == io.EOF && len(p.handleStack) == 0 {
-                return nil
-            }
-            return err
+        if err == nil {
+            goto PARSE_LOOP
         }
-        goto PARSE_LOOP
-    } else if sig == SIG_REUSE_LAST_BYTE {
+        if err == io.EOF && len(p.handleStack) == 0 {
+            return nil
+        }
+        return err
+    } else if sig == SIG_REUSE_BYTE {
         goto PARSE_LOOP
     } else if sig == SIG_EOF {
         // only in this block if allowFreeContextWhitespace is on
@@ -476,13 +486,15 @@ func (p *Parser) Parse(byteReader io.ByteReader) error {
         // is truly no more data before EOF
         END_STATE_LOOP:
         singleByte, err = byteReader.ReadByte()
-        if err == io.EOF {
+        if err == nil {
+            if isCharWhitespace(singleByte) {
+                goto END_STATE_LOOP
+            }
+            return unspecifiedParseError
+        } else if err == io.EOF {
             return nil
         }
-        if !isCharWhitespace(singleByte) {
-            return unspecifiedParseError
-        }
-        goto END_STATE_LOOP
+        return err
     } else if sig == SIG_ERR {
         return p.err
     }
