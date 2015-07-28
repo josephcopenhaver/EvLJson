@@ -1,0 +1,2 @@
+#!/bin/bash
+bash -c 'source run_setup; cd src/EvLJson; go test -v'
