@@ -6,6 +6,10 @@ import (
 	//"log"  // DEBUG
 )
 
+// REMINDER: leave data member [literalStateIndex] in as removing it
+// would only result in the same # of operations, but using more jump
+// table space which slows performance
+
 // TODO: optimize out data member [allowFreeContextWhitespace]
 
 const (
@@ -117,12 +121,15 @@ func handleStart(p *Parser, b byte) uint8 {
 }
 
 func handleNull(p *Parser, b byte) uint8 {
-	if b == VALUE_STR_NULL[p.literalStateIndex] {
-		p.literalStateIndex++
-		if p.literalStateIndex == uint8(len(VALUE_STR_NULL)) {
-			p.literalStateIndex = 1
-			popHandle(p)
+	literalStateIndex := p.literalStateIndex
+	if b == VALUE_STR_NULL[literalStateIndex] {
+		literalStateIndex++
+		if literalStateIndex != uint8(len(VALUE_STR_NULL)) {
+			p.literalStateIndex = literalStateIndex
+			return SIG_NEXT_BYTE
 		}
+		p.literalStateIndex = 1
+		popHandle(p)
 		return SIG_NEXT_BYTE
 	}
 	p.err = unspecifiedParseError
@@ -130,12 +137,15 @@ func handleNull(p *Parser, b byte) uint8 {
 }
 
 func handleTrue(p *Parser, b byte) uint8 {
-	if b == VALUE_STR_TRUE[p.literalStateIndex] {
-		p.literalStateIndex++
-		if p.literalStateIndex == uint8(len(VALUE_STR_TRUE)) {
-			p.literalStateIndex = 1
-			popHandle(p)
+	literalStateIndex := p.literalStateIndex
+	if b == VALUE_STR_TRUE[literalStateIndex] {
+		literalStateIndex++
+		if literalStateIndex != uint8(len(VALUE_STR_TRUE)) {
+			p.literalStateIndex = literalStateIndex
+			return SIG_NEXT_BYTE
 		}
+		p.literalStateIndex = 1
+		popHandle(p)
 		return SIG_NEXT_BYTE
 	}
 	p.err = unspecifiedParseError
@@ -143,12 +153,15 @@ func handleTrue(p *Parser, b byte) uint8 {
 }
 
 func handleFalse(p *Parser, b byte) uint8 {
-	if b == VALUE_STR_FALSE[p.literalStateIndex] {
-		p.literalStateIndex++
-		if p.literalStateIndex == uint8(len(VALUE_STR_FALSE)) {
-			p.literalStateIndex = 1
-			popHandle(p)
+	literalStateIndex := p.literalStateIndex
+	if b == VALUE_STR_FALSE[literalStateIndex] {
+		literalStateIndex++
+		if literalStateIndex != uint8(len(VALUE_STR_FALSE)) {
+			p.literalStateIndex = literalStateIndex
+			return SIG_NEXT_BYTE
 		}
+		p.literalStateIndex = 1
+		popHandle(p)
 		return SIG_NEXT_BYTE
 	}
 	p.err = unspecifiedParseError
