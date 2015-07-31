@@ -53,11 +53,8 @@ func checkHexChar(p *Parser, b byte) uint8 {
 			if b <= 'f' {
 				return SIG_NEXT_BYTE
 			}
-		} else {
-			b += ('a' - 'A')
-			if b >= 'a' && b <= 'f' {
-				return SIG_NEXT_BYTE
-			}
+		} else if b >= 'A' && b <= 'F' {
+			return SIG_NEXT_BYTE
 		}
 	}
 	p.err = unspecifiedParseError
