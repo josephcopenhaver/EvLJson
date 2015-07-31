@@ -43,6 +43,27 @@ func isCharWhitespace(b byte) bool {
 	}
 }
 
+func checkHexChar(p *Parser, b byte) uint8 {
+	if b <= '9' {
+		if b >= '0' {
+			return SIG_NEXT_BYTE
+		}
+	} else {
+		if b >= 'a' {
+			if b <= 'f' {
+				return SIG_NEXT_BYTE
+			}
+		} else {
+			b += ('a' - 'A')
+			if b >= 'a' && b <= 'f' {
+				return SIG_NEXT_BYTE
+			}
+		}
+	}
+	p.err = unspecifiedParseError
+	return SIG_NEXT_BYTE
+}
+
 func pushHandle(p *Parser, newHandle func(p *Parser, b byte) uint8) {
 	p.handleStack = append(p.handleStack, p.handle)
 	p.handle = newHandle
@@ -259,31 +280,6 @@ func handleExponentCoefficientEnd(p *Parser, b byte) uint8 {
 }
 
 func handleString(p *Parser, b byte) uint8 {
-	// TODO: optimize this function into two parts
-	// TODO: optimize decision tree for hex
-	stringHexDigitIndex := p.stringHexDigitIndex
-	if stringHexDigitIndex > 0 {
-		if b >= '0' && b <= '9' {
-			// do nothing
-		} else if b >= 'a' && b <= 'f' {
-			// do nothing
-		} else if b < 'a' {
-			b += ('a' - 'A')
-			if b >= 'a' && b <= 'f' {
-				// do nothing
-			} else {
-				p.err = unspecifiedParseError
-				return SIG_ERR
-			}
-		}
-		if stringHexDigitIndex == 4 {
-			p.stringHexDigitIndex = 0
-		} else {
-			p.stringHexDigitIndex = stringHexDigitIndex + 1
-		}
-		return SIG_NEXT_BYTE
-	}
-
 	switch b {
 	case 'b':
 		fallthrough
@@ -312,10 +308,11 @@ func handleString(p *Parser, b byte) uint8 {
 		p.reverseSolidusParity = false
 		return SIG_NEXT_BYTE
 	case 'u':
-		if p.reverseSolidusParity {
-			p.reverseSolidusParity = false
-			p.stringHexDigitIndex = 1
+		if !p.reverseSolidusParity {
+			return SIG_NEXT_BYTE
 		}
+		p.reverseSolidusParity = false
+		p.handle = handleStringHexShortIndex0
 		return SIG_NEXT_BYTE
 	default:
 		if !p.reverseSolidusParity {
@@ -324,6 +321,26 @@ func handleString(p *Parser, b byte) uint8 {
 		p.err = unspecifiedParseError
 		return SIG_ERR
 	}
+}
+
+func handleStringHexShortIndex0(p *Parser, b byte) uint8 {
+	p.handle = handleStringHexShortIndex1
+	return checkHexChar(p, b)
+}
+
+func handleStringHexShortIndex1(p *Parser, b byte) uint8 {
+	p.handle = handleStringHexShortIndex2
+	return checkHexChar(p, b)
+}
+
+func handleStringHexShortIndex2(p *Parser, b byte) uint8 {
+	p.handle = handleStringHexShortIndex3
+	return checkHexChar(p, b)
+}
+
+func handleStringHexShortIndex3(p *Parser, b byte) uint8 {
+	p.handle = handleString
+	return checkHexChar(p, b)
 }
 
 func handleDictExpectFirstKeyOrEnd(p *Parser, b byte) uint8 {
@@ -513,7 +530,6 @@ PARSE_LOOP:
 type Parser struct {
 	handle                     func(p *Parser, b byte) uint8
 	literalStateIndex          uint8
-	stringHexDigitIndex        uint8
 	reverseSolidusParity       bool
 	allowFreeContextWhitespace bool
 	err                        error
@@ -529,7 +545,6 @@ const (
 func NewParser() Parser {
 	self := Parser{
 		reverseSolidusParity: false,
-		stringHexDigitIndex:  0,
 		literalStateIndex:    1,
 		handle:               handleStart,
 		err:                  nil,
