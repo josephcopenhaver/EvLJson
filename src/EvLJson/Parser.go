@@ -32,6 +32,11 @@ func (err UnspecifiedJsonParseError) Error() string {
 
 var unspecifiedParseError = UnspecifiedJsonParseError{}
 
+func signalUnspecifiedError(p *Parser) uint8 {
+	p.err = unspecifiedParseError
+	return SIG_ERR
+}
+
 func isCharWhitespace(b byte) bool {
 	switch b {
 	case 0x20: // SPACE
@@ -61,8 +66,7 @@ func checkHexChar(p *Parser, b byte) uint8 {
 			return SIG_NEXT_BYTE
 		}
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func pushHandle(p *Parser, newHandle func(p *Parser, b byte) uint8) {
@@ -116,8 +120,7 @@ func handleStart(p *Parser, b byte) uint8 {
 		pushHandle(p, handleDictExpectFirstKeyOrEnd)
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleNull(p *Parser, b byte) uint8 {
@@ -132,8 +135,7 @@ func handleNull(p *Parser, b byte) uint8 {
 		popHandle(p)
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleTrue(p *Parser, b byte) uint8 {
@@ -148,8 +150,7 @@ func handleTrue(p *Parser, b byte) uint8 {
 		popHandle(p)
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleFalse(p *Parser, b byte) uint8 {
@@ -164,8 +165,7 @@ func handleFalse(p *Parser, b byte) uint8 {
 		popHandle(p)
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleZeroOrDecimalOrExponentStart(p *Parser, b byte) uint8 {
@@ -211,8 +211,7 @@ func handleZeroOrDecimalOrExponentNegativeStart(p *Parser, b byte) uint8 {
 		p.handle = handleInt
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleDecimalFractionalStart(p *Parser, b byte) uint8 {
@@ -250,8 +249,7 @@ func handleExponentCoefficientStart(p *Parser, b byte) uint8 {
 		p.handle = handleExponentCoefficientNegative
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleExponentCoefficientNegative(p *Parser, b byte) uint8 {
@@ -263,8 +261,7 @@ func handleExponentCoefficientNegative(p *Parser, b byte) uint8 {
 		p.handle = handleExponentCoefficientLeadingZero
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleExponentCoefficientLeadingZero(p *Parser, b byte) uint8 {
@@ -328,8 +325,7 @@ func handleStringReverseSolidusPrefix(p *Parser, b byte) uint8 {
 		p.handle = handleStringHexShortIndex0
 		return SIG_NEXT_BYTE
 	default:
-		p.err = unspecifiedParseError
-		return SIG_ERR
+		return signalUnspecifiedError(p)
 	}
 }
 
@@ -368,8 +364,7 @@ func handleDictExpectFirstKeyOrEnd(p *Parser, b byte) uint8 {
 		popHandle(p)
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleDictExpectKeyValueDelim(p *Parser, b byte) uint8 {
@@ -382,8 +377,7 @@ func handleDictExpectKeyValueDelim(p *Parser, b byte) uint8 {
 		p.handle = handleDictExpectValue
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleDictExpectValue(p *Parser, b byte) uint8 {
@@ -397,8 +391,7 @@ func handleDictExpectValue(p *Parser, b byte) uint8 {
 		pushHandle(p, newHandle)
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleDictExpectEntryDelimOrEnd(p *Parser, b byte) uint8 {
@@ -415,8 +408,7 @@ func handleDictExpectEntryDelimOrEnd(p *Parser, b byte) uint8 {
 		popHandle(p)
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleDictExpectKey(p *Parser, b byte) uint8 {
@@ -430,8 +422,7 @@ func handleDictExpectKey(p *Parser, b byte) uint8 {
 		pushHandle(p, handleString)
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleArrayExpectFirstEntryOrEnd(p *Parser, b byte) uint8 {
@@ -449,8 +440,7 @@ func handleArrayExpectFirstEntryOrEnd(p *Parser, b byte) uint8 {
 		pushHandle(p, newHandle)
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleArrayExpectDelimOrEnd(p *Parser, b byte) uint8 {
@@ -467,8 +457,7 @@ func handleArrayExpectDelimOrEnd(p *Parser, b byte) uint8 {
 		popHandle(p)
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleArrayExpectEntry(p *Parser, b byte) uint8 {
@@ -482,16 +471,14 @@ func handleArrayExpectEntry(p *Parser, b byte) uint8 {
 		pushHandle(p, newHandle)
 		return SIG_NEXT_BYTE
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func handleEnd(p *Parser, b byte) uint8 {
 	if p.allowFreeContextWhitespace && isCharWhitespace(b) {
 		return SIG_EOF
 	}
-	p.err = unspecifiedParseError
-	return SIG_ERR
+	return signalUnspecifiedError(p)
 }
 
 func (p *Parser) Parse(byteReader io.ByteReader) error {
