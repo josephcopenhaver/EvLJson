@@ -62,7 +62,7 @@ func checkHexChar(p *Parser, b byte) uint8 {
 		}
 	}
 	p.err = unspecifiedParseError
-	return SIG_NEXT_BYTE
+	return SIG_ERR
 }
 
 func pushHandle(p *Parser, newHandle func(p *Parser, b byte) uint8) {
@@ -553,9 +553,9 @@ const (
 // TODO: support config options
 func NewParser() Parser {
 	self := Parser{
-		literalStateIndex:    1,
-		handle:               handleStart,
-		err:                  nil,
+		literalStateIndex: 1,
+		handle:            handleStart,
+		err:               nil,
 		allowFreeContextWhitespace: false,
 	}
 	// minimum nominal case will require 3 state levels
