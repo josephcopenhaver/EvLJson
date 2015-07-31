@@ -1,0 +1,6 @@
+0. Have a basis for benchmarks AND tests before optimizing ( and only do it if you need to )
+1. plan for optimizing the positive, least complex path first and foremost
+2. let the netagive path fail fast, ALWAYS
+3. Do NOT try to express low level compiler concerns such as inlineing
+4. Reduce conditional branches/struct size in functions, most can be preempted as a state
+5. Keep functions super simple, if you need to do something complex, you are probably doing it wrong somewhere else

@@ -281,6 +281,21 @@ func handleExponentCoefficientEnd(p *Parser, b byte) uint8 {
 
 func handleString(p *Parser, b byte) uint8 {
 	switch b {
+	case '\\':
+		// reverse solidus prefix detected
+		p.handle = handleStringReverseSolidusPrefix
+		return SIG_NEXT_BYTE
+	case '"':
+		// end of string
+		popHandle(p)
+		fallthrough
+	default:
+		return SIG_NEXT_BYTE
+	}
+}
+
+func handleStringReverseSolidusPrefix(p *Parser, b byte) uint8 {
+	switch b {
 	case 'b':
 		fallthrough
 	case 'f':
@@ -293,31 +308,16 @@ func handleString(p *Parser, b byte) uint8 {
 		fallthrough
 	case '/':
 		// allowed to be escaped, no special implications
-		p.reverseSolidusParity = false
-		return SIG_NEXT_BYTE
+		fallthrough
 	case '\\':
-		// reverse solidus (escape) parity adjusted
-		p.reverseSolidusParity = !p.reverseSolidusParity
-		return SIG_NEXT_BYTE
+		fallthrough
 	case '"':
-		if !p.reverseSolidusParity {
-			// end of string
-			popHandle(p)
-			return SIG_NEXT_BYTE
-		}
-		p.reverseSolidusParity = false
+		p.handle = handleString
 		return SIG_NEXT_BYTE
 	case 'u':
-		if !p.reverseSolidusParity {
-			return SIG_NEXT_BYTE
-		}
-		p.reverseSolidusParity = false
 		p.handle = handleStringHexShortIndex0
 		return SIG_NEXT_BYTE
 	default:
-		if !p.reverseSolidusParity {
-			return SIG_NEXT_BYTE
-		}
 		p.err = unspecifiedParseError
 		return SIG_ERR
 	}
@@ -530,7 +530,6 @@ PARSE_LOOP:
 type Parser struct {
 	handle                     func(p *Parser, b byte) uint8
 	literalStateIndex          uint8
-	reverseSolidusParity       bool
 	allowFreeContextWhitespace bool
 	err                        error
 	handleStack                []func(p *Parser, b byte) uint8
@@ -544,7 +543,6 @@ const (
 // TODO: support config options
 func NewParser() Parser {
 	self := Parser{
-		reverseSolidusParity: false,
 		literalStateIndex:    1,
 		handle:               handleStart,
 		err:                  nil,
