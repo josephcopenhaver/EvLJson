@@ -95,6 +95,11 @@ func TestStrangeValidJson(t *testing.T) {
 		"{\"\":-0.0e-00}",
 		"{\"\":-0.0e-001}",
 		"{\"\":null}",
+		"{\"\":0}",
+		"{\"\":1}",
+		"{\"\":true}",
+		"{\"\":false}",
+		"{\"\":null}",
 	}
 	for _, str := range testCases {
 		t.Logf(LOG_STMT_FMT, str)

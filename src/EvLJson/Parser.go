@@ -6,6 +6,8 @@ import (
 	//"log"  // DEBUG
 )
 
+// TODO: optimize out data member [allowFreeContextWhitespace]
+
 const (
 	SIG_NEXT_BYTE = iota
 	SIG_REUSE_BYTE
@@ -257,6 +259,8 @@ func handleExponentCoefficientEnd(p *Parser, b byte) uint8 {
 }
 
 func handleString(p *Parser, b byte) uint8 {
+	// TODO: optimize this function into two parts
+	// TODO: optimize decision tree for hex
 	stringHexDigitIndex := p.stringHexDigitIndex
 	if stringHexDigitIndex > 0 {
 		if b >= '0' && b <= '9' {
