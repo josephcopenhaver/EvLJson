@@ -27,14 +27,26 @@ func BenchmarkParseWithoutCallbacks(b *testing.B) {
 	}
 }
 
-func parseStringWithoutCallbacks(jsonString string) error {
+func parseStringAllowWhitespace(jsonString string) error {
+	reader := bytes.NewReader([]byte(jsonString))
+	evLJsonParser := NewParser()
+	return evLJsonParser.Parse(reader, OPT_ALLOW_EXTRA_WHITESPACE)
+}
+
+func parseStringWithoutCallbacksOrOptions(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
 	evLJsonParser := NewParser()
 	return evLJsonParser.Parse(reader, 0)
 }
 
+func parseStringWithoutCallbacksTillEOF(jsonString string) error {
+	reader := bytes.NewReader([]byte(jsonString))
+	evLJsonParser := NewParser()
+	return evLJsonParser.Parse(reader, OPT_PARSE_UNTIL_EOF)
+}
+
 func TestInvalidJsonEmpty(t *testing.T) {
-	err := parseStringWithoutCallbacks("")
+	err := parseStringWithoutCallbacksOrOptions("")
 	if err == nil {
 		t.Fail()
 	}
@@ -50,7 +62,7 @@ func TestStartObjects(t *testing.T) {
 	}
 	for _, str := range testCases {
 		t.Logf(LOG_STMT_FMT, str)
-		err := parseStringWithoutCallbacks(str)
+		err := parseStringWithoutCallbacksOrOptions(str)
 		if err == nil {
 			t.FailNow()
 		}
@@ -103,7 +115,7 @@ func TestStrangeValidJson(t *testing.T) {
 	}
 	for _, str := range testCases {
 		t.Logf(LOG_STMT_FMT, str)
-		err := parseStringWithoutCallbacks(str)
+		err := parseStringWithoutCallbacksOrOptions(str)
 		if err != nil {
 			t.FailNow()
 		}
@@ -125,7 +137,7 @@ func TestNormalValidJson(t *testing.T) {
 	}
 	for _, str := range testCases {
 		t.Logf(LOG_STMT_FMT, str)
-		err := parseStringWithoutCallbacks(str)
+		err := parseStringWithoutCallbacksOrOptions(str)
 		if err != nil {
 			t.FailNow()
 		}
@@ -153,8 +165,89 @@ func TestBadJson(t *testing.T) {
 	}
 	for _, str := range testCases {
 		t.Logf(LOG_STMT_FMT, str)
-		err := parseStringWithoutCallbacks(str)
+		err := parseStringWithoutCallbacksOrOptions(str)
 		if err == nil {
+			t.FailNow()
+		}
+	}
+}
+
+func whitespaceTestCases() []string {
+	return []string{
+		" [ 0 ] ",
+		"[ 0 ] ",
+		" [0 ] ",
+		" [ 0] ",
+		" [ 0 ]",
+		"[0 ] ",
+		" [0] ",
+		" [ 0]",
+		" [0]",
+		"[ 0]",
+		"[0 ]",
+		"[0] ",
+		" { \"\" : 0 } ",
+		"{ \"\" : 0 } ",
+		" {\"\" : 0 } ",
+		" { \"\": 0 } ",
+		" { \"\" :0 } ",
+		" { \"\" : 0} ",
+		" { \"\" : 0 }",
+		" { \"\" : 0 } ",
+		"{\"\" : 0 } ",
+		" {\"\": 0 } ",
+		" { \"\": 0 } ",
+		" { \"\" :0} ",
+		" { \"\" : 0}",
+		"{\"\": 0 } ",
+		" {\"\":0 } ",
+		" { \"\": 0} ",
+		" { \"\" :0}",
+		"{\"\":0 } ",
+		" {\"\":0} ",
+		" { \"\": 0}",
+		"{\"\":0} ",
+		" {\"\":0}",
+		" { \"a\" : 0 } ",
+		"{ \"a\" : 0 } ",
+		" {\"a\" : 0 } ",
+		" { \"a\": 0 } ",
+		" { \"a\" :0 } ",
+		" { \"a\" : 0} ",
+		" { \"a\" : 0 }",
+		" { \"a\" : 0 } ",
+		"{\"a\" : 0 } ",
+		" {\"a\": 0 } ",
+		" { \"a\": 0 } ",
+		" { \"a\" :0} ",
+		" { \"a\" : 0}",
+		"{\"a\": 0 } ",
+		" {\"a\":0 } ",
+		" { \"a\": 0} ",
+		" { \"a\" :0}",
+		"{\"a\":0 } ",
+		" {\"a\":0} ",
+		" { \"a\": 0}",
+		"{\"a\":0} ",
+		" {\"a\":0}",
+	}
+}
+
+func TestFailOnWhitepsace(t *testing.T) {
+	for _, str := range whitespaceTestCases() {
+		t.Logf(LOG_STMT_FMT, str)
+		err := parseStringWithoutCallbacksTillEOF(str)
+		if err == nil {
+			t.FailNow()
+		}
+	}
+}
+
+func TestPassOnWhitepsace(t *testing.T) {
+	for _, str := range whitespaceTestCases() {
+		t.Logf(LOG_STMT_FMT, str)
+		err := parseStringAllowWhitespace(str)
+		if err != nil {
 			t.FailNow()
 		}
 	}

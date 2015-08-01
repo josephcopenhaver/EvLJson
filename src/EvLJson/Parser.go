@@ -92,11 +92,11 @@ func getNewValueHandle(b byte) parserHandle_t {
 func handleStart(p *Parser, b byte) signal_t {
 	p.handle = p.handleEnd
 	if b == '[' {
-		pushHandle(p, handleArrayExpectFirstEntryOrEnd)
+		pushHandle(p, p.handleArrayExpectFirstEntryOrEnd)
 		return SIG_NEXT_BYTE
 	}
 	if b == '{' {
-		pushHandle(p, handleDictExpectFirstKeyOrEnd)
+		pushHandle(p, p.handleDictExpectFirstKeyOrEnd)
 		return SIG_NEXT_BYTE
 	}
 	return signalUnspecifiedError(p)
@@ -516,9 +516,9 @@ func (p *Parser) Parse(byteReader io.ByteReader, options uint8) error {
 		p.handleArrayExpectEntry = handleArrayExpectEntry
 
 		if options&OPT_PARSE_UNTIL_EOF == 0 {
-			p.handleEnd = handleEnd
-		} else {
 			p.handleEnd = handleStop
+		} else {
+			p.handleEnd = handleEnd
 		}
 	} else {
 		p.handle = handleStart_AEW
@@ -532,9 +532,9 @@ func (p *Parser) Parse(byteReader io.ByteReader, options uint8) error {
 		p.handleArrayExpectEntry = handleArrayExpectEntry_AEW
 
 		if options&OPT_PARSE_UNTIL_EOF == 0 {
-			p.handleEnd = handleEnd_AEW
-		} else {
 			p.handleEnd = handleStop
+		} else {
+			p.handleEnd = handleEnd_AEW
 		}
 	}
 
