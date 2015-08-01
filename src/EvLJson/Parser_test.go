@@ -20,7 +20,7 @@ func BenchmarkParseWithoutCallbacks(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		reader := bytes.NewReader(BENCHMARK_BYTES)
 		evLJsonParser := NewParser()
-		if err = evLJsonParser.Parse(reader); err == nil {
+		if err = evLJsonParser.Parse(reader, 0); err == nil {
 			continue
 		}
 		log.Fatal(err)
@@ -30,7 +30,7 @@ func BenchmarkParseWithoutCallbacks(b *testing.B) {
 func parseStringWithoutCallbacks(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
 	evLJsonParser := NewParser()
-	return evLJsonParser.Parse(reader)
+	return evLJsonParser.Parse(reader, 0)
 }
 
 func TestInvalidJsonEmpty(t *testing.T) {
