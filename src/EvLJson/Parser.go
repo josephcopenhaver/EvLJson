@@ -52,23 +52,6 @@ func isCharWhitespace(b byte) bool {
 	}
 }
 
-func checkHexChar(p *Parser, b byte) uint8 {
-	if b <= '9' {
-		if b >= '0' {
-			return SIG_NEXT_BYTE
-		}
-	} else {
-		if b >= 'a' {
-			if b <= 'f' {
-				return SIG_NEXT_BYTE
-			}
-		} else if b >= 'A' && b <= 'F' {
-			return SIG_NEXT_BYTE
-		}
-	}
-	return signalUnspecifiedError(p)
-}
-
 func pushHandle(p *Parser, newHandle func(p *Parser, b byte) uint8) {
 	p.handleStack = append(p.handleStack, p.handle)
 	p.handle = newHandle
@@ -124,11 +107,9 @@ func handleStart(p *Parser, b byte) uint8 {
 }
 
 func handleNull(p *Parser, b byte) uint8 {
-	literalStateIndex := p.literalStateIndex
-	if b == VALUE_STR_NULL[literalStateIndex] {
-		literalStateIndex++
-		if literalStateIndex != uint8(len(VALUE_STR_NULL)) {
-			p.literalStateIndex = literalStateIndex
+	if b == VALUE_STR_NULL[p.literalStateIndex] {
+		if p.literalStateIndex != uint8(len(VALUE_STR_NULL) - 1) {
+			p.literalStateIndex++
 			return SIG_NEXT_BYTE
 		}
 		p.literalStateIndex = 1
@@ -139,11 +120,9 @@ func handleNull(p *Parser, b byte) uint8 {
 }
 
 func handleTrue(p *Parser, b byte) uint8 {
-	literalStateIndex := p.literalStateIndex
-	if b == VALUE_STR_TRUE[literalStateIndex] {
-		literalStateIndex++
-		if literalStateIndex != uint8(len(VALUE_STR_TRUE)) {
-			p.literalStateIndex = literalStateIndex
+	if b == VALUE_STR_TRUE[p.literalStateIndex] {
+		if p.literalStateIndex != uint8(len(VALUE_STR_TRUE) - 1) {
+			p.literalStateIndex++
 			return SIG_NEXT_BYTE
 		}
 		p.literalStateIndex = 1
@@ -154,11 +133,9 @@ func handleTrue(p *Parser, b byte) uint8 {
 }
 
 func handleFalse(p *Parser, b byte) uint8 {
-	literalStateIndex := p.literalStateIndex
-	if b == VALUE_STR_FALSE[literalStateIndex] {
-		literalStateIndex++
-		if literalStateIndex != uint8(len(VALUE_STR_FALSE)) {
-			p.literalStateIndex = literalStateIndex
+	if b == VALUE_STR_FALSE[p.literalStateIndex] {
+		if p.literalStateIndex != uint8(len(VALUE_STR_FALSE) - 1) {
+			p.literalStateIndex++
 			return SIG_NEXT_BYTE
 		}
 		p.literalStateIndex = 1
@@ -322,31 +299,34 @@ func handleStringReverseSolidusPrefix(p *Parser, b byte) uint8 {
 		p.handle = handleString
 		return SIG_NEXT_BYTE
 	case 'u':
-		p.handle = handleStringHexShortIndex0
+		p.handle = handleStringHexShort
 		return SIG_NEXT_BYTE
 	default:
 		return signalUnspecifiedError(p)
 	}
 }
 
-func handleStringHexShortIndex0(p *Parser, b byte) uint8 {
-	p.handle = handleStringHexShortIndex1
-	return checkHexChar(p, b)
-}
-
-func handleStringHexShortIndex1(p *Parser, b byte) uint8 {
-	p.handle = handleStringHexShortIndex2
-	return checkHexChar(p, b)
-}
-
-func handleStringHexShortIndex2(p *Parser, b byte) uint8 {
-	p.handle = handleStringHexShortIndex3
-	return checkHexChar(p, b)
-}
-
-func handleStringHexShortIndex3(p *Parser, b byte) uint8 {
-	p.handle = handleString
-	return checkHexChar(p, b)
+func handleStringHexShort(p *Parser, b byte) uint8 {
+	if p.literalStateIndex != 4 {
+		p.literalStateIndex++
+	} else {
+		p.literalStateIndex = 1
+		p.handle = handleString
+	}
+	if b <= '9' {
+		if b >= '0' {
+			return SIG_NEXT_BYTE
+		}
+	} else {
+		if b >= 'a' {
+			if b <= 'f' {
+				return SIG_NEXT_BYTE
+			}
+		} else if b >= 'A' && b <= 'F' {
+			return SIG_NEXT_BYTE
+		}
+	}
+	return signalUnspecifiedError(p)
 }
 
 func handleDictExpectFirstKeyOrEnd(p *Parser, b byte) uint8 {
