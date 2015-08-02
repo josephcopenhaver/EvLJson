@@ -15,7 +15,7 @@ import (
 // 2. publish byte data
 // 3. allow signaling the parser to stop
 
-const (
+const ( // signal_t
 	SIG_NEXT_BYTE = iota
 	SIG_REUSE_BYTE
 	SIG_STOP
@@ -27,8 +27,26 @@ const (
 	VALUE_STR_TRUE  = "true"
 	VALUE_STR_FALSE = "false"
 )
+const ( // event_t
+	EVT_NONE = iota
+	EVT_NULL
+	EVT_TRUE
+	EVT_FALSE
+	EVT_ENTER // BEGIN: container list
+	EVT_ARRAY
+	EVT_DICT
+	EVT_LEAVE // END: container list
+	EVT_STRING
+	EVT_HEX_BYTE
+	EVT_NUMBER
+	EVT_DECIMAL
+	EVT_EXPONENT
+)
 
 type signal_t uint8
+type event_t uint8
+type eventReceiver_t func(parser *Parser, evt event_t)
+type dataReceiver_t func(parser *Parser, b byte)
 type parserHandle_t func(p *Parser, b byte) signal_t
 type UnspecifiedJsonParserError struct{}
 
@@ -41,6 +59,11 @@ var unspecifiedParserError = UnspecifiedJsonParserError{}
 func signalUnspecifiedError(p *Parser) signal_t {
 	p.err = unspecifiedParserError
 	return SIG_ERR
+}
+
+func signalDataNextByte(p *Parser, b byte) signal_t {
+	p.onData(p, b)
+	return SIG_NEXT_BYTE
 }
 
 func isCharWhitespace(b byte) bool {
@@ -63,45 +86,52 @@ func pushHandle(p *Parser, newHandle parserHandle_t) {
 	p.handle = newHandle
 }
 
+func pushHandleEvent(p *Parser, newHandle parserHandle_t, evt event_t) {
+	pushHandle(p, newHandle)
+	p.onEvent(p, EVT_ENTER)
+	p.onEvent(p, evt)
+}
+
 func popHandle(p *Parser) {
+	p.onEvent(p, EVT_LEAVE)
 	newMaxIdx := len(p.handleStack) - 1
 	p.handle, p.handleStack = p.handleStack[newMaxIdx], p.handleStack[:newMaxIdx]
 }
 
-func getNewValueHandle(b byte) parserHandle_t {
+func getNewValueHandle(b byte) (parserHandle_t, event_t) {
 	if b >= '1' && b <= '9' {
-		return handleInt
+		return handleInt, EVT_NUMBER
 	}
 	switch b {
 	case '0':
-		return handleZeroOrDecimalOrExponentStart
+		return handleZeroOrDecimalOrExponentStart, EVT_NUMBER
 	case '[':
-		return handleArrayExpectFirstEntryOrEnd
+		return handleArrayExpectFirstEntryOrEnd, EVT_ARRAY
 	case '{':
-		return handleDictExpectFirstKeyOrEnd
+		return handleDictExpectFirstKeyOrEnd, EVT_DICT
 	case VALUE_STR_NULL[0]:
-		return handleNull
+		return handleNull, EVT_NONE
 	case VALUE_STR_FALSE[0]:
-		return handleFalse
+		return handleFalse, EVT_NONE
 	case VALUE_STR_TRUE[0]:
-		return handleTrue
+		return handleTrue, EVT_NONE
 	case '"':
-		return handleString
+		return handleString, EVT_STRING
 	case '-':
-		return handleZeroOrDecimalOrExponentNegativeStart
+		return handleZeroOrDecimalOrExponentNegativeStart, EVT_NUMBER
 	default:
-		return nil
+		return nil, EVT_NONE
 	}
 }
 
 func handleStart(p *Parser, b byte) signal_t {
 	p.handle = p.handleEnd
 	if b == '[' {
-		pushHandle(p, p.handleArrayExpectFirstEntryOrEnd)
+		pushHandleEvent(p, p.handleArrayExpectFirstEntryOrEnd, EVT_ARRAY)
 		return SIG_NEXT_BYTE
 	}
 	if b == '{' {
-		pushHandle(p, p.handleDictExpectFirstKeyOrEnd)
+		pushHandleEvent(p, p.handleDictExpectFirstKeyOrEnd, EVT_DICT)
 		return SIG_NEXT_BYTE
 	}
 	return signalUnspecifiedError(p)
@@ -115,6 +145,7 @@ func handleNull(p *Parser, b byte) signal_t {
 		}
 		p.literalStateIndex = 1
 		popHandle(p)
+		p.onEvent(p, EVT_NULL)
 		return SIG_NEXT_BYTE
 	}
 	return signalUnspecifiedError(p)
@@ -128,6 +159,7 @@ func handleTrue(p *Parser, b byte) signal_t {
 		}
 		p.literalStateIndex = 1
 		popHandle(p)
+		p.onEvent(p, EVT_TRUE)
 		return SIG_NEXT_BYTE
 	}
 	return signalUnspecifiedError(p)
@@ -141,6 +173,7 @@ func handleFalse(p *Parser, b byte) signal_t {
 		}
 		p.literalStateIndex = 1
 		popHandle(p)
+		p.onEvent(p, EVT_FALSE)
 		return SIG_NEXT_BYTE
 	}
 	return signalUnspecifiedError(p)
@@ -149,13 +182,13 @@ func handleFalse(p *Parser, b byte) signal_t {
 func handleZeroOrDecimalOrExponentStart(p *Parser, b byte) signal_t {
 	switch b {
 	case '.':
-		// TODO: negotiate type changing features
+		p.onEvent(p, EVT_DECIMAL)
 		p.handle = handleDecimalFractionalStart
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	case 'e':
-		// TODO: negotiate type changing features
+		p.onEvent(p, EVT_EXPONENT)
 		p.handle = handleExponentCoefficientStart
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	default:
 		popHandle(p)
 		return SIG_REUSE_BYTE
@@ -164,17 +197,17 @@ func handleZeroOrDecimalOrExponentStart(p *Parser, b byte) signal_t {
 
 func handleInt(p *Parser, b byte) signal_t {
 	if b >= '0' && b <= '9' {
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	switch b {
 	case '.':
-		// TODO: negotiate type changing features
+		p.onEvent(p, EVT_DECIMAL)
 		p.handle = handleDecimalFractionalStart
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	case 'e':
-		// TODO: negotiate type changing features
+		p.onEvent(p, EVT_EXPONENT)
 		p.handle = handleExponentCoefficientStart
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	popHandle(p)
 	return SIG_REUSE_BYTE
@@ -183,11 +216,11 @@ func handleInt(p *Parser, b byte) signal_t {
 func handleZeroOrDecimalOrExponentNegativeStart(p *Parser, b byte) signal_t {
 	if b == '0' {
 		p.handle = handleZeroOrDecimalOrExponentStart
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	if b >= '1' && b <= '9' {
 		p.handle = handleInt
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	return signalUnspecifiedError(p)
 }
@@ -195,7 +228,7 @@ func handleZeroOrDecimalOrExponentNegativeStart(p *Parser, b byte) signal_t {
 func handleDecimalFractionalStart(p *Parser, b byte) signal_t {
 	if b >= '0' && b <= '9' {
 		p.handle = handleDecimalFractionalEnd
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	popHandle(p)
 	return SIG_REUSE_BYTE
@@ -204,11 +237,11 @@ func handleDecimalFractionalStart(p *Parser, b byte) signal_t {
 func handleDecimalFractionalEnd(p *Parser, b byte) signal_t {
 	switch {
 	case b >= '0' && b <= '9':
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	case b == 'e':
-		// TODO: negotiate type changing features
+		p.onEvent(p, EVT_EXPONENT)
 		p.handle = handleExponentCoefficientStart
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	popHandle(p)
 	return SIG_REUSE_BYTE
@@ -217,15 +250,15 @@ func handleDecimalFractionalEnd(p *Parser, b byte) signal_t {
 func handleExponentCoefficientStart(p *Parser, b byte) signal_t {
 	if b >= '1' && b <= '9' {
 		p.handle = handleExponentCoefficientEnd
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	if b == '0' {
 		p.handle = handleExponentCoefficientLeadingZero
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	if b == '-' {
 		p.handle = handleExponentCoefficientNegative
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	return signalUnspecifiedError(p)
 }
@@ -233,11 +266,11 @@ func handleExponentCoefficientStart(p *Parser, b byte) signal_t {
 func handleExponentCoefficientNegative(p *Parser, b byte) signal_t {
 	if b >= '1' && b <= '9' {
 		p.handle = handleExponentCoefficientEnd
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	if b == '0' {
 		p.handle = handleExponentCoefficientLeadingZero
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	return signalUnspecifiedError(p)
 }
@@ -245,10 +278,10 @@ func handleExponentCoefficientNegative(p *Parser, b byte) signal_t {
 func handleExponentCoefficientLeadingZero(p *Parser, b byte) signal_t {
 	if b >= '1' && b <= '9' {
 		p.handle = handleExponentCoefficientEnd
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	if b == '0' {
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	// TODO: exponent only had /0+/ for the exponent
 	// signal this if it is important
@@ -258,7 +291,7 @@ func handleExponentCoefficientLeadingZero(p *Parser, b byte) signal_t {
 
 func handleExponentCoefficientEnd(p *Parser, b byte) signal_t {
 	if b >= '0' && b <= '9' {
-		return SIG_NEXT_BYTE
+		return signalDataNextByte(p, b)
 	}
 	popHandle(p)
 	return SIG_REUSE_BYTE
@@ -273,23 +306,32 @@ func handleString(p *Parser, b byte) signal_t {
 	case '"':
 		// end of string
 		popHandle(p)
-		fallthrough
-	default:
 		return SIG_NEXT_BYTE
+	default:
+		return signalDataNextByte(p, b)
 	}
 }
 
 func handleStringReverseSolidusPrefix(p *Parser, b byte) signal_t {
 	switch b {
 	case 'b':
-		fallthrough
+		// backspace
+		b = '\b'
+		goto UNESCAPED
 	case 'f':
-		fallthrough
+		// formfeed
+		b = '\f'
+		goto UNESCAPED
 	case 'n':
-		fallthrough
+		// newline
+		b = '\n'
+		goto UNESCAPED
 	case 'r':
-		fallthrough
+		// carriage return
+		b = '\r'
+		goto UNESCAPED
 	case 't':
+		b = '\t'
 		fallthrough
 	case '/':
 		// allowed to be escaped, no special implications
@@ -297,33 +339,78 @@ func handleStringReverseSolidusPrefix(p *Parser, b byte) signal_t {
 	case '\\':
 		fallthrough
 	case '"':
-		p.handle = handleString
-		return SIG_NEXT_BYTE
+		goto UNESCAPED
 	case 'u':
-		p.handle = handleStringHexShort
+		p.handle = handleStringHexShortEven
 		return SIG_NEXT_BYTE
 	default:
 		return signalUnspecifiedError(p)
 	}
+UNESCAPED:
+	p.handle = handleString
+	return signalDataNextByte(p, b)
 }
 
-func handleStringHexShort(p *Parser, b byte) signal_t {
-	if p.literalStateIndex != 4 {
-		p.literalStateIndex++
+/*
+func hexShortToData(p *Parser, b byte) {
+	if p.literalStateIndex%2 == 0 {
+		p.HexShortBuffer[0] = b
+	} else {
+		dst := []byte{0}
+		p.HexShortBuffer[1] = b
+
+		hex.Decode(dst, p.HexShortBuffer) // guaranteed to decode properly
+
+		p.onData(p, dst[0])
+	}
+}
+*/
+
+func handleStringHexShortEven(p *Parser, b byte) signal_t {
+	p.handle = handleStringHexShortOdd
+	if b <= '9' {
+		if b >= '0' {
+			p.HexShortBuffer[0] = b
+			return SIG_NEXT_BYTE
+		}
+	} else {
+		if b >= 'a' {
+			if b <= 'f' {
+				p.HexShortBuffer[0] = b
+				return SIG_NEXT_BYTE
+			}
+		} else if b >= 'A' && b <= 'F' {
+			p.HexShortBuffer[0] = b + ('a' - 'A')
+			return SIG_NEXT_BYTE
+		}
+	}
+	return signalUnspecifiedError(p)
+}
+
+func handleStringHexShortOdd(p *Parser, b byte) signal_t {
+	if p.literalStateIndex == 1 {
+		p.literalStateIndex = 2
+		p.handle = handleStringHexShortEven
 	} else {
 		p.literalStateIndex = 1
 		p.handle = handleString
 	}
 	if b <= '9' {
 		if b >= '0' {
+			p.HexShortBuffer[1] = b
+			p.onEvent(p, EVT_HEX_BYTE)
 			return SIG_NEXT_BYTE
 		}
 	} else {
 		if b >= 'a' {
 			if b <= 'f' {
+				p.HexShortBuffer[1] = b
+				p.onEvent(p, EVT_HEX_BYTE)
 				return SIG_NEXT_BYTE
 			}
 		} else if b >= 'A' && b <= 'F' {
+			p.HexShortBuffer[1] = b + ('a' - 'A')
+			p.onEvent(p, EVT_HEX_BYTE)
 			return SIG_NEXT_BYTE
 		}
 	}
@@ -334,7 +421,7 @@ func handleDictExpectFirstKeyOrEnd(p *Parser, b byte) signal_t {
 	switch b {
 	case '"':
 		p.handle = p.handleDictExpectKeyValueDelim
-		pushHandle(p, handleString)
+		pushHandleEvent(p, handleString, EVT_STRING)
 		return SIG_NEXT_BYTE
 	case '}':
 		popHandle(p)
@@ -352,9 +439,14 @@ func handleDictExpectKeyValueDelim(p *Parser, b byte) signal_t {
 }
 
 func handleDictExpectValue(p *Parser, b byte) signal_t {
-	if newHandle := getNewValueHandle(b); newHandle != nil {
+	if newHandle, newEvent := getNewValueHandle(b); newHandle != nil {
 		p.handle = p.handleDictExpectEntryDelimOrEnd
-		pushHandle(p, newHandle)
+		switch newEvent {
+		case EVT_NONE:
+			pushHandle(p, newHandle)
+		default:
+			pushHandleEvent(p, newHandle, newEvent)
+		}
 		return SIG_NEXT_BYTE
 	}
 	return signalUnspecifiedError(p)
@@ -375,23 +467,28 @@ func handleDictExpectEntryDelimOrEnd(p *Parser, b byte) signal_t {
 func handleDictExpectKey(p *Parser, b byte) signal_t {
 	if b == '"' {
 		p.handle = p.handleDictExpectKeyValueDelim
-		pushHandle(p, handleString)
+		pushHandleEvent(p, handleString, EVT_STRING)
 		return SIG_NEXT_BYTE
 	}
 	return signalUnspecifiedError(p)
 }
 
 func handleArrayExpectFirstEntryOrEnd(p *Parser, b byte) signal_t {
-	if b == ']' {
-		popHandle(p)
-		return SIG_NEXT_BYTE
+	if b != ']' {
+		if newHandle, newEvent := getNewValueHandle(b); newHandle != nil {
+			p.handle = p.handleArrayExpectDelimOrEnd
+			switch newEvent {
+			case EVT_NONE:
+				pushHandle(p, newHandle)
+			default:
+				pushHandleEvent(p, newHandle, newEvent)
+			}
+			return SIG_NEXT_BYTE
+		}
+		return signalUnspecifiedError(p)
 	}
-	if newHandle := getNewValueHandle(b); newHandle != nil {
-		p.handle = p.handleArrayExpectDelimOrEnd
-		pushHandle(p, newHandle)
-		return SIG_NEXT_BYTE
-	}
-	return signalUnspecifiedError(p)
+	popHandle(p)
+	return SIG_NEXT_BYTE
 }
 
 func handleArrayExpectDelimOrEnd(p *Parser, b byte) signal_t {
@@ -407,9 +504,14 @@ func handleArrayExpectDelimOrEnd(p *Parser, b byte) signal_t {
 }
 
 func handleArrayExpectEntry(p *Parser, b byte) signal_t {
-	if newHandle := getNewValueHandle(b); newHandle != nil {
+	if newHandle, newEvent := getNewValueHandle(b); newHandle != nil {
 		p.handle = p.handleArrayExpectDelimOrEnd
-		pushHandle(p, newHandle)
+		switch newEvent {
+		case EVT_NONE:
+			pushHandle(p, newHandle)
+		default:
+			pushHandleEvent(p, newHandle, newEvent)
+		}
 		return SIG_NEXT_BYTE
 	}
 	return signalUnspecifiedError(p)
@@ -497,16 +599,36 @@ func handleStop(p *Parser, b byte) signal_t {
 	return SIG_STOP
 }
 
+func defaultOnEvent(parser *Parser, evt event_t) {
+	return
+}
+
+func defaultOnData(parser *Parser, b byte) {
+	return
+}
+
 const (
 	OPT_ALLOW_EXTRA_WHITESPACE = 0x01
 	OPT_STRICTER_EXPONENTS     = 0x02 // TODO: not implemented
 	OPT_PARSE_UNTIL_EOF        = 0x04
 )
 
-func (p *Parser) Parse(byteReader io.ByteReader, options uint8) error {
+func (p *Parser) Parse(byteReader io.ByteReader, onEvent eventReceiver_t, onData dataReceiver_t, options uint8) error {
 	singleByte, err := byteReader.ReadByte()
 	if err != nil {
 		return err
+	}
+
+	if onEvent != nil {
+		p.onEvent = onEvent
+	} else {
+		p.onEvent = defaultOnEvent
+	}
+
+	if onData != nil {
+		p.onData = onData
+	} else {
+		p.onData = defaultOnData
 	}
 
 	if options&OPT_ALLOW_EXTRA_WHITESPACE == 0 {
@@ -584,7 +706,10 @@ type Parser struct {
 
 	// current state processor
 
-	handle parserHandle_t
+	handle   parserHandle_t
+	UserData interface{}
+	onEvent  eventReceiver_t
+	onData   dataReceiver_t
 
 	// BEGIN: configured calls
 
@@ -600,6 +725,8 @@ type Parser struct {
 
 	// END: configured calls
 
+	HexShortBuffer []byte
+
 	literalStateIndex uint8
 	err               error
 	handleStack       []parserHandle_t
@@ -609,6 +736,10 @@ func NewParser() Parser {
 	self := Parser{
 		literalStateIndex: 1,
 		err:               nil,
+		UserData:          nil,
+		onEvent:           nil,
+		onData:            nil,
+		HexShortBuffer:    []byte{0, 0},
 	}
 	// minimum nominal case will require 3 state levels
 	// TODO: allow for configuring this size parameter

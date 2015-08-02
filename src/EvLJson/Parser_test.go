@@ -2,6 +2,7 @@ package EvLJson
 
 import (
 	"bytes"
+	"encoding/hex"
 	"log"
 	"testing"
 )
@@ -20,7 +21,7 @@ func BenchmarkParseWithoutCallbacks(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		reader := bytes.NewReader(BENCHMARK_BYTES)
 		evLJsonParser := NewParser()
-		if err = evLJsonParser.Parse(reader, 0); err == nil {
+		if err = evLJsonParser.Parse(reader, nil, nil, 0); err == nil {
 			continue
 		}
 		log.Fatal(err)
@@ -30,19 +31,19 @@ func BenchmarkParseWithoutCallbacks(b *testing.B) {
 func parseStringAllowWhitespace(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
 	evLJsonParser := NewParser()
-	return evLJsonParser.Parse(reader, OPT_ALLOW_EXTRA_WHITESPACE)
+	return evLJsonParser.Parse(reader, nil, nil, OPT_ALLOW_EXTRA_WHITESPACE)
 }
 
 func parseStringWithoutCallbacksOrOptions(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
 	evLJsonParser := NewParser()
-	return evLJsonParser.Parse(reader, 0)
+	return evLJsonParser.Parse(reader, nil, nil, 0)
 }
 
 func parseStringWithoutCallbacksTillEOF(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
 	evLJsonParser := NewParser()
-	return evLJsonParser.Parse(reader, OPT_PARSE_UNTIL_EOF)
+	return evLJsonParser.Parse(reader, nil, nil, OPT_PARSE_UNTIL_EOF)
 }
 
 func TestInvalidJsonEmpty(t *testing.T) {
@@ -250,5 +251,43 @@ func TestPassOnWhitepsace(t *testing.T) {
 		if err != nil {
 			t.FailNow()
 		}
+	}
+}
+
+func BenchmarkCapitolHexConversion(b *testing.B) {
+	bytes := []byte{0}
+	var err error
+
+	for i := 0; i < b.N; i++ {
+		if _, err = hex.Decode(bytes, []byte{'A', 'F'}); err == nil {
+			continue
+		}
+		log.Fatal(err)
+	}
+}
+
+func BenchmarkLowerHexConversion(b *testing.B) {
+	bytes := []byte{0}
+	var err error
+
+	for i := 0; i < b.N; i++ {
+		if _, err = hex.Decode(bytes, []byte{'a', 'f'}); err == nil {
+			continue
+		}
+		log.Fatal(err)
+	}
+}
+
+func BenchmarkSpeedupHexConversion(b *testing.B) {
+	bytes := []byte{0}
+	var err error
+	low := byte('A')
+	high := byte('F')
+
+	for i := 0; i < b.N; i++ {
+		if _, err = hex.Decode(bytes, []byte{low + ('a' - 'A'), high + ('a' - 'A')}); err == nil {
+			continue
+		}
+		log.Fatal(err)
 	}
 }
