@@ -10,11 +10,16 @@ import (
 // would only result in the same # of operations, but using more jump
 // table space which slows performance
 
+// TODO: callback properties
+// 1. publish state changes
+// 2. publish byte data
+// 3. allow signaling the parser to stop
+
 const (
 	SIG_NEXT_BYTE = iota
 	SIG_REUSE_BYTE
-	SIG_EOF
 	SIG_STOP
+	SIG_EOF
 	SIG_ERR
 )
 const (
@@ -540,8 +545,8 @@ func (p *Parser) Parse(byteReader io.ByteReader, options uint8) error {
 
 PARSE_LOOP:
 	//fmt.Printf("%s", string(singleByte))  // DEBUG
-	signal := p.handle(p, singleByte)
-	if signal == SIG_NEXT_BYTE {
+	switch p.handle(p, singleByte) {
+	case SIG_NEXT_BYTE:
 		singleByte, err = byteReader.ReadByte()
 		if err == nil {
 			goto PARSE_LOOP
@@ -550,11 +555,11 @@ PARSE_LOOP:
 			return nil
 		}
 		return err
-	} else if signal == SIG_REUSE_BYTE {
+	case SIG_REUSE_BYTE:
 		goto PARSE_LOOP
-	} else if signal == SIG_STOP {
+	case SIG_STOP:
 		return nil
-	} else if signal == SIG_EOF {
+	case SIG_EOF:
 		// only in this block if OPT_ALLOW_EXTRA_WHITESPACE flag is on
 		// and trailing whitespace does exist, so just make sure there
 		// is truly no more data before EOF
@@ -569,12 +574,10 @@ PARSE_LOOP:
 			return nil
 		}
 		return err
-	} else if signal == SIG_ERR {
+	default:
+		// SIG_ERR
 		return p.err
 	}
-
-	// NOTE: not possible to reach this point
-	return unspecifiedParserError
 }
 
 type Parser struct {
