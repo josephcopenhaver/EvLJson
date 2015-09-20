@@ -18,6 +18,9 @@ import (
 //
 const MIN_DATA_BUFFER_SIZE = 3
 
+// minimum nominal case will require 3 state levels
+const MIN_STACK_DEPTH = 3
+
 const ( // data stream output signals
 	DATA_CONTINUES = false
 	DATA_END       = true
@@ -324,7 +327,7 @@ func handleExponentCoefficientStart(p *Parser, b byte) signal_t {
 		return signalDataNextByte(p, b)
 	}
 	if b == '0' {
-		p.handle = handleExponentCoefficientLeadingZero
+		p.handle = p.handleExponentCoefficientLeadingZero
 		return signalDataNextByte(p, b)
 	}
 	if b == '-' {
@@ -340,7 +343,7 @@ func handleExponentCoefficientNegative(p *Parser, b byte) signal_t {
 		return signalDataNextByte(p, b)
 	}
 	if b == '0' {
-		p.handle = handleExponentCoefficientLeadingZero
+		p.handle = p.handleExponentCoefficientLeadingZero
 		return signalDataNextByte(p, b)
 	}
 	return signalUnspecifiedError(p)
@@ -354,8 +357,18 @@ func handleExponentCoefficientLeadingZero(p *Parser, b byte) signal_t {
 	if b == '0' {
 		return signalDataNextByte(p, b)
 	}
-	// TODO: exponent only had /0+/ for the exponent
-	// signal this if it is important
+	popHandle(p)
+	return yieldToUserSig(p, SIG_REUSE_BYTE)
+}
+
+func handleExponentCoefficientStricterLeadingZero(p *Parser, b byte) signal_t {
+	if b >= '1' && b <= '9' {
+		p.handle = handleExponentCoefficientEnd
+		return signalDataNextByte(p, b)
+	}
+	if b == '0' {
+		return signalDataNextByte(p, b)
+	}
 	popHandle(p)
 	return yieldToUserSig(p, SIG_REUSE_BYTE)
 }
@@ -714,7 +727,7 @@ func defaultOnEvent(parser *Parser, evt event_t) {
 
 const (
 	OPT_ALLOW_EXTRA_WHITESPACE = 0x01
-	OPT_STRICTER_EXPONENTS     = 0x02 // TODO: not implemented
+	OPT_STRICTER_EXPONENTS     = 0x02
 	OPT_PARSE_UNTIL_EOF        = 0x04
 )
 
@@ -768,6 +781,12 @@ func (p *Parser) Parse(byteReader io.ByteReader, onEvent eventReceiver_t, OnData
 		}
 	}
 
+	if options&OPT_STRICTER_EXPONENTS == 0 {
+		p.handleExponentCoefficientLeadingZero = handleExponentCoefficientLeadingZero
+	} else {
+		p.handleExponentCoefficientLeadingZero = handleExponentCoefficientStricterLeadingZero
+	}
+
 PARSE_LOOP:
 	//fmt.Printf("%s", string(singleByte))  // DEBUG
 	switch p.handle(p, singleByte) {
@@ -816,29 +835,29 @@ type Parser struct {
 
 	// BEGIN: configured calls
 
-	handleDictExpectFirstKeyOrEnd    parserHandle_t
-	handleDictExpectKeyValueDelim    parserHandle_t
-	handleDictExpectValue            parserHandle_t
-	handleDictExpectEntryDelimOrEnd  parserHandle_t
-	handleDictExpectKey              parserHandle_t
-	handleArrayExpectFirstEntryOrEnd parserHandle_t
-	handleArrayExpectDelimOrEnd      parserHandle_t
-	handleArrayExpectEntry           parserHandle_t
-	handleEnd                        parserHandle_t
+	handleDictExpectFirstKeyOrEnd        parserHandle_t
+	handleDictExpectKeyValueDelim        parserHandle_t
+	handleDictExpectValue                parserHandle_t
+	handleDictExpectEntryDelimOrEnd      parserHandle_t
+	handleDictExpectKey                  parserHandle_t
+	handleArrayExpectFirstEntryOrEnd     parserHandle_t
+	handleArrayExpectDelimOrEnd          parserHandle_t
+	handleArrayExpectEntry               parserHandle_t
+	handleEnd                            parserHandle_t
+	handleExponentCoefficientLeadingZero parserHandle_t
 
 	// END: configured calls
 
-	hexShortBuffer []byte
-
-	literalStateIndex uint8
-	err               error
-	handleStack       []parserHandle_t
+	hexShortBuffer    []byte
 	DataBuffer        []byte
-	userSignal        signal_t
+	handleStack       []parserHandle_t
 	DataIsJsonNum     bool
+	literalStateIndex uint8
+	userSignal        signal_t
+	err               error
 }
 
-func NewParser(dataBuffer []byte) Parser {
+func NewParser(dataBuffer []byte, typeDepthHint int) Parser {
 	self := Parser{
 		literalStateIndex: 1,
 		err:               nil,
@@ -858,8 +877,9 @@ func NewParser(dataBuffer []byte) Parser {
 		dataBuffer = dataBuffer[:0]
 	}
 	self.DataBuffer = dataBuffer
-	// minimum nominal case will require 3 state levels
-	// TODO: allow for configuring this size parameter
-	self.handleStack = make([]parserHandle_t, 0, 3)
+	if typeDepthHint < MIN_STACK_DEPTH {
+		typeDepthHint = MIN_STACK_DEPTH
+	}
+	self.handleStack = make([]parserHandle_t, 0, typeDepthHint)
 	return self
 }

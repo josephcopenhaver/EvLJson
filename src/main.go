@@ -51,7 +51,7 @@ func main() {
 	}
 
 	bufferedReader := bufio.NewReaderSize(httpResponse.Body, BUFIO_READER_SIZE)
-	evLJsonParser := EvLJson.NewParser(nil)
+	evLJsonParser := EvLJson.NewParser(nil, 0)
 
 	err = evLJsonParser.Parse(bufferedReader, nil, nil, 0)
 

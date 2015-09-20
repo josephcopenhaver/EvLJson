@@ -24,7 +24,7 @@ func BenchmarkParseWithoutCallbacks(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		reader := bytes.NewReader(BENCHMARK_BYTES)
-		evLJsonParser := NewParser(dataBuffer)
+		evLJsonParser := NewParser(dataBuffer, 0)
 		if err = evLJsonParser.Parse(reader, nil, nil, 0); err == nil {
 			continue
 		}
@@ -34,19 +34,19 @@ func BenchmarkParseWithoutCallbacks(b *testing.B) {
 
 func parseStringAllowWhitespace(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
-	evLJsonParser := NewParser(nil)
+	evLJsonParser := NewParser(nil, 0)
 	return evLJsonParser.Parse(reader, nil, nil, OPT_ALLOW_EXTRA_WHITESPACE)
 }
 
 func parseStringWithoutCallbacksOrOptions(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
-	evLJsonParser := NewParser(nil)
+	evLJsonParser := NewParser(nil, 0)
 	return evLJsonParser.Parse(reader, nil, nil, 0)
 }
 
 func parseStringWithoutCallbacksTillEOF(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
-	evLJsonParser := NewParser(nil)
+	evLJsonParser := NewParser(nil, 0)
 	return evLJsonParser.Parse(reader, nil, nil, OPT_PARSE_UNTIL_EOF)
 }
 
