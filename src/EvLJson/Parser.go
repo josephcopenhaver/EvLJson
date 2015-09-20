@@ -1,6 +1,7 @@
 package EvLJson
 
 import (
+	"encoding/hex"
 	"io"
 	//"fmt"  // DEBUG
 	//"log"  // DEBUG
@@ -128,12 +129,14 @@ func popHandle(p *Parser) {
 	p.onEvent(p, EVT_LEAVE)
 }
 
-func getNewValueHandle(b byte) (parserHandle_t, event_t) {
+func getNewValueHandle(p *Parser, b byte) (parserHandle_t, event_t) {
 	if b >= '1' && b <= '9' {
+		p.DataIsJsonNum = true
 		return handleInt, EVT_NUMBER
 	}
 	switch b {
 	case '0':
+		p.DataIsJsonNum = true
 		return handleZeroOrDecimalOrExponentStart, EVT_NUMBER
 	case '[':
 		return handleArrayExpectFirstEntryOrEnd, EVT_ARRAY
@@ -146,8 +149,10 @@ func getNewValueHandle(b byte) (parserHandle_t, event_t) {
 	case VALUE_STR_TRUE[0]:
 		return handleTrue, EVT_NONE
 	case '"':
+		p.DataIsJsonNum = false
 		return handleString, EVT_STRING
 	case '-':
+		p.DataIsJsonNum = true
 		return handleZeroOrDecimalOrExponentNegativeStart, EVT_NUMBER
 	default:
 		return nil, EVT_NONE
@@ -371,6 +376,10 @@ func handleStringReverseSolidusPrefix(p *Parser, b byte) signal_t {
 	case '"':
 		goto UNESCAPED
 	case 'u':
+		if p.OnData == nil {
+			p.handle = handleStringHexShortNoReporting
+			return SIG_NEXT_BYTE
+		}
 		p.handle = handleStringHexShortEven
 		return SIG_NEXT_BYTE
 	default:
@@ -381,21 +390,48 @@ UNESCAPED:
 	return signalDataNextByte(p, b)
 }
 
+func handleStringHexShortNoReporting(p *Parser, b byte) signal_t {
+	for true {
+		if b <= '9' {
+			if b >= '0' {
+				break
+			}
+		} else {
+			if b >= 'a' {
+				if b <= 'f' {
+					break
+				}
+			} else if b >= 'A' && b <= 'F' {
+				break
+			}
+		}
+		return signalUnspecifiedError(p)
+	}
+	literalStateIndex := p.literalStateIndex + 1
+	if literalStateIndex != 5 {
+		p.literalStateIndex = literalStateIndex
+		return SIG_NEXT_BYTE
+	}
+	p.handle = handleString
+	p.literalStateIndex = 1
+	return SIG_NEXT_BYTE
+}
+
 func handleStringHexShortEven(p *Parser, b byte) signal_t {
 	p.handle = handleStringHexShortOdd
 	if b <= '9' {
 		if b >= '0' {
-			p.hexShortBuffer = b
+			p.hexShortBuffer[p.literalStateIndex] = b
 			return SIG_NEXT_BYTE
 		}
 	} else {
 		if b >= 'a' {
 			if b <= 'f' {
-				p.hexShortBuffer = b
+				p.hexShortBuffer[p.literalStateIndex] = b
 				return SIG_NEXT_BYTE
 			}
 		} else if b >= 'A' && b <= 'F' {
-			p.hexShortBuffer = b + ('a' - 'A')
+			p.hexShortBuffer[p.literalStateIndex] = b + ('a' - 'A')
 			return SIG_NEXT_BYTE
 		}
 	}
@@ -403,66 +439,52 @@ func handleStringHexShortEven(p *Parser, b byte) signal_t {
 }
 
 func handleStringHexShortOdd(p *Parser, b byte) signal_t {
-	if p.literalStateIndex == 1 {
-		p.literalStateIndex = 2
+	literalStateIndex := p.literalStateIndex
+	if literalStateIndex == 1 {
+		p.literalStateIndex = 0
 		p.handle = handleStringHexShortEven
 	} else {
 		p.literalStateIndex = 1
 		p.handle = handleString
 	}
-	if b <= '9' {
-		if b >= '0' {
-			if p.OnData == nil {
-				return SIG_NEXT_BYTE
+	for true {
+		if b <= '9' {
+			if b >= '0' {
+				break
 			}
-			size := len(p.DataBuffer)
-			if !(size+1 >= cap(p.DataBuffer)) {
-				p.DataBuffer = p.DataBuffer[0 : size+2]
-			} else {
-				p.OnData(p, DATA_CONTINUES)
-				p.DataBuffer = p.DataBuffer[0:2]
-			}
-			p.DataBuffer[size] = p.hexShortBuffer
-			size++
-			p.DataBuffer[size] = b
-			return SIG_NEXT_BYTE
-		}
-	} else {
-		if b >= 'a' {
-			if b <= 'f' {
-				if p.OnData == nil {
-					return SIG_NEXT_BYTE
+		} else {
+			if b >= 'a' {
+				if b <= 'f' {
+					break
 				}
-				size := len(p.DataBuffer)
-				if !(size+1 >= cap(p.DataBuffer)) {
-					p.DataBuffer = p.DataBuffer[0 : size+2]
-				} else {
-					p.OnData(p, DATA_CONTINUES)
-					p.DataBuffer = p.DataBuffer[0:2]
-				}
-				p.DataBuffer[size] = p.hexShortBuffer
-				size++
-				p.DataBuffer[size] = b
-				return SIG_NEXT_BYTE
+			} else if b >= 'A' && b <= 'F' {
+				b = b + ('a' - 'A')
+				break
 			}
-		} else if b >= 'A' && b <= 'F' {
-			if p.OnData == nil {
-				return SIG_NEXT_BYTE
-			}
-			size := len(p.DataBuffer)
-			if !(size+1 >= cap(p.DataBuffer)) {
-				p.DataBuffer = p.DataBuffer[0 : size+2]
-			} else {
-				p.OnData(p, DATA_CONTINUES)
-				p.DataBuffer = p.DataBuffer[0:2]
-			}
-			p.DataBuffer[size] = p.hexShortBuffer
-			size++
-			p.DataBuffer[size] = b
-			return SIG_NEXT_BYTE
 		}
+		return signalUnspecifiedError(p)
 	}
-	return signalUnspecifiedError(p)
+	var err error
+	decodedBytes := []byte{0}
+	if _, err = hex.Decode(decodedBytes, []byte{p.hexShortBuffer[literalStateIndex], b}); err == nil {
+		if literalStateIndex == 1 {
+			p.hexShortBuffer[1] = decodedBytes[0]
+			return SIG_NEXT_BYTE
+		}
+		size := len(p.DataBuffer)
+		if !(size+1 >= cap(p.DataBuffer)) {
+			p.DataBuffer = p.DataBuffer[0 : size+2]
+		} else {
+			p.OnData(p, DATA_CONTINUES)
+			p.DataBuffer = p.DataBuffer[0:2]
+		}
+		p.DataBuffer[size] = p.hexShortBuffer[1]
+		size++
+		p.DataBuffer[size] = decodedBytes[0]
+		return SIG_NEXT_BYTE
+	}
+	p.err = err
+	return SIG_ERR
 }
 
 func handleDictExpectFirstKeyOrEnd(p *Parser, b byte) signal_t {
@@ -487,7 +509,7 @@ func handleDictExpectKeyValueDelim(p *Parser, b byte) signal_t {
 }
 
 func handleDictExpectValue(p *Parser, b byte) signal_t {
-	if newHandle, newEvent := getNewValueHandle(b); newHandle != nil {
+	if newHandle, newEvent := getNewValueHandle(p, b); newHandle != nil {
 		p.handle = p.handleDictExpectEntryDelimOrEnd
 		switch newEvent {
 		case EVT_NONE:
@@ -523,7 +545,7 @@ func handleDictExpectKey(p *Parser, b byte) signal_t {
 
 func handleArrayExpectFirstEntryOrEnd(p *Parser, b byte) signal_t {
 	if b != ']' {
-		if newHandle, newEvent := getNewValueHandle(b); newHandle != nil {
+		if newHandle, newEvent := getNewValueHandle(p, b); newHandle != nil {
 			p.handle = p.handleArrayExpectDelimOrEnd
 			switch newEvent {
 			case EVT_NONE:
@@ -552,7 +574,7 @@ func handleArrayExpectDelimOrEnd(p *Parser, b byte) signal_t {
 }
 
 func handleArrayExpectEntry(p *Parser, b byte) signal_t {
-	if newHandle, newEvent := getNewValueHandle(b); newHandle != nil {
+	if newHandle, newEvent := getNewValueHandle(p, b); newHandle != nil {
 		p.handle = p.handleArrayExpectDelimOrEnd
 		switch newEvent {
 		case EVT_NONE:
@@ -763,12 +785,13 @@ type Parser struct {
 
 	// END: configured calls
 
-	hexShortBuffer byte
+	hexShortBuffer []byte
 
 	literalStateIndex uint8
 	err               error
 	handleStack       []parserHandle_t
 	DataBuffer        []byte
+	DataIsJsonNum     bool
 }
 
 func NewParser(dataBuffer []byte) Parser {
@@ -778,6 +801,8 @@ func NewParser(dataBuffer []byte) Parser {
 		UserData:          nil,
 		onEvent:           nil,
 		OnData:            nil,
+		hexShortBuffer:    make([]byte, 2),
+		DataIsJsonNum:     false,
 	}
 	if dataBuffer == nil {
 		dataBuffer = make([]byte, MIN_DATA_BUFFER_SIZE)
