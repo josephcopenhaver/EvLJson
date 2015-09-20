@@ -1,11 +1,11 @@
 package main
 
 import (
+	"EvLJson"
 	"bufio"
+	//"fmt" // DEBUG
 	"log"
 	"net/http"
-	//"fmt"  // DEBUG
-	"EvLJson"
 )
 
 /*
@@ -51,9 +51,9 @@ func main() {
 	}
 
 	bufferedReader := bufio.NewReaderSize(httpResponse.Body, BUFIO_READER_SIZE)
-	evLJsonParser := EvLJson.NewParser()
+	evLJsonParser := EvLJson.NewParser(nil, 0)
 
-	err = evLJsonParser.Parse(bufferedReader)
+	err = evLJsonParser.Parse(bufferedReader, nil, nil, 0)
 
 	if err != nil {
 		log.Fatal(err)
