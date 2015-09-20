@@ -523,14 +523,20 @@ func handleStringHexShortOdd(p *Parser, b byte) signal_t {
 		size := len(p.DataBuffer)
 		if !(size+1 >= cap(p.DataBuffer)) {
 			p.DataBuffer = p.DataBuffer[0 : size+2]
+			p.DataBuffer[size] = p.hexShortBuffer[1]
+			size++
+			p.DataBuffer[size] = decodedBytes[0]
+			return SIG_NEXT_BYTE
 		} else {
 			p.OnData(p, DATA_CONTINUES)
+			if p.userSignal == SIG_STOP {
+				return SIG_STOP
+			}
 			p.DataBuffer = p.DataBuffer[0:2]
+			p.DataBuffer[0] = p.hexShortBuffer[1]
+			p.DataBuffer[1] = decodedBytes[0]
+			return SIG_NEXT_BYTE
 		}
-		p.DataBuffer[size] = p.hexShortBuffer[1]
-		size++
-		p.DataBuffer[size] = decodedBytes[0]
-		return yieldToUserSig(p, SIG_NEXT_BYTE)
 	}
 	p.err = err
 	return SIG_ERR
@@ -735,7 +741,7 @@ func (p *Parser) ParseStop() {
 	p.userSignal = SIG_STOP
 }
 
-func (p *Parser) Parse(byteReader io.ByteReader, onEvent eventReceiver_t, OnData dataReceiver_t, options uint8) error {
+func (p *Parser) Parse(byteReader io.ByteReader, onEvent eventReceiver_t, onData dataReceiver_t, options uint8) error {
 	singleByte, err := byteReader.ReadByte()
 	if err != nil {
 		return err
@@ -746,6 +752,8 @@ func (p *Parser) Parse(byteReader io.ByteReader, onEvent eventReceiver_t, OnData
 	} else {
 		p.onEvent = defaultOnEvent
 	}
+
+	p.OnData = onData
 
 	if options&OPT_ALLOW_EXTRA_WHITESPACE == 0 {
 		p.handle = handleStart
