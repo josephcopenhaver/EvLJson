@@ -7,7 +7,10 @@ import (
 	"testing"
 )
 
-const LOG_STMT_FMT = "%s\n"
+const (
+	LOG_STMT_FMT          = "%s\n"
+	TEST_DATA_BUFFER_SIZE = 1024
+)
 
 var BENCHMARK_BYTES []byte
 
@@ -17,10 +20,11 @@ func init() {
 
 func BenchmarkParseWithoutCallbacks(b *testing.B) {
 	var err error
+	dataBuffer := make([]byte, TEST_DATA_BUFFER_SIZE)
 
 	for i := 0; i < b.N; i++ {
 		reader := bytes.NewReader(BENCHMARK_BYTES)
-		evLJsonParser := NewParser()
+		evLJsonParser := NewParser(dataBuffer)
 		if err = evLJsonParser.Parse(reader, nil, nil, 0); err == nil {
 			continue
 		}
@@ -30,19 +34,19 @@ func BenchmarkParseWithoutCallbacks(b *testing.B) {
 
 func parseStringAllowWhitespace(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
-	evLJsonParser := NewParser()
+	evLJsonParser := NewParser(nil)
 	return evLJsonParser.Parse(reader, nil, nil, OPT_ALLOW_EXTRA_WHITESPACE)
 }
 
 func parseStringWithoutCallbacksOrOptions(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
-	evLJsonParser := NewParser()
+	evLJsonParser := NewParser(nil)
 	return evLJsonParser.Parse(reader, nil, nil, 0)
 }
 
 func parseStringWithoutCallbacksTillEOF(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
-	evLJsonParser := NewParser()
+	evLJsonParser := NewParser(nil)
 	return evLJsonParser.Parse(reader, nil, nil, OPT_PARSE_UNTIL_EOF)
 }
 

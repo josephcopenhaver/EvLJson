@@ -15,6 +15,18 @@ import (
 // 2. publish byte data
 // 3. allow signaling the parser to stop
 
+// at least two for encoded short chars in strings plus 1 so that short
+// handling does not need to signal more than once as the buffer is updated
+//
+// ^^^ this is very important ^^^
+//
+const MIN_DATA_BUFFER_SIZE = 3
+
+const ( // data stream output signals
+	DATA_CONTINUES = false
+	DATA_END       = true
+)
+
 const ( // signal_t
 	SIG_NEXT_BYTE = iota
 	SIG_REUSE_BYTE
@@ -37,7 +49,6 @@ const ( // event_t
 	EVT_DICT
 	EVT_LEAVE // END: container list
 	EVT_STRING
-	EVT_HEX_BYTE
 	EVT_NUMBER
 	EVT_DECIMAL
 	EVT_EXPONENT
@@ -46,7 +57,7 @@ const ( // event_t
 type signal_t uint8
 type event_t uint8
 type eventReceiver_t func(parser *Parser, evt event_t)
-type dataReceiver_t func(parser *Parser, b byte)
+type dataReceiver_t func(parser *Parser, endOfData bool)
 type parserHandle_t func(p *Parser, b byte) signal_t
 type UnspecifiedJsonParserError struct{}
 
@@ -62,7 +73,18 @@ func signalUnspecifiedError(p *Parser) signal_t {
 }
 
 func signalDataNextByte(p *Parser, b byte) signal_t {
-	p.onData(p, b)
+	if !p.CaptureData {
+		return SIG_NEXT_BYTE
+	}
+	size := len(p.DataBuffer)
+	if size != cap(p.DataBuffer) {
+		p.DataBuffer = p.DataBuffer[0 : size+1]
+		p.DataBuffer[size] = b
+		return SIG_NEXT_BYTE
+	}
+	p.onData(p, DATA_CONTINUES)
+	p.DataBuffer = p.DataBuffer[0:1]
+	p.DataBuffer[0] = b
 	return SIG_NEXT_BYTE
 }
 
@@ -93,9 +115,15 @@ func pushHandleEvent(p *Parser, newHandle parserHandle_t, evt event_t) {
 }
 
 func popHandle(p *Parser) {
-	p.onEvent(p, EVT_LEAVE)
 	newMaxIdx := len(p.handleStack) - 1
 	p.handle, p.handleStack = p.handleStack[newMaxIdx], p.handleStack[:newMaxIdx]
+	if len(p.DataBuffer) == 0 {
+		p.onEvent(p, EVT_LEAVE)
+		return
+	}
+	p.onData(p, DATA_END)
+	p.DataBuffer = p.DataBuffer[:0]
+	p.onEvent(p, EVT_LEAVE)
 }
 
 func getNewValueHandle(b byte) (parserHandle_t, event_t) {
@@ -351,36 +379,21 @@ UNESCAPED:
 	return signalDataNextByte(p, b)
 }
 
-/*
-func hexShortToData(p *Parser, b byte) {
-	if p.literalStateIndex%2 == 0 {
-		p.HexShortBuffer[0] = b
-	} else {
-		dst := []byte{0}
-		p.HexShortBuffer[1] = b
-
-		hex.Decode(dst, p.HexShortBuffer) // guaranteed to decode properly
-
-		p.onData(p, dst[0])
-	}
-}
-*/
-
 func handleStringHexShortEven(p *Parser, b byte) signal_t {
 	p.handle = handleStringHexShortOdd
 	if b <= '9' {
 		if b >= '0' {
-			p.HexShortBuffer[0] = b
+			p.hexShortBuffer = b
 			return SIG_NEXT_BYTE
 		}
 	} else {
 		if b >= 'a' {
 			if b <= 'f' {
-				p.HexShortBuffer[0] = b
+				p.hexShortBuffer = b
 				return SIG_NEXT_BYTE
 			}
 		} else if b >= 'A' && b <= 'F' {
-			p.HexShortBuffer[0] = b + ('a' - 'A')
+			p.hexShortBuffer = b + ('a' - 'A')
 			return SIG_NEXT_BYTE
 		}
 	}
@@ -397,20 +410,53 @@ func handleStringHexShortOdd(p *Parser, b byte) signal_t {
 	}
 	if b <= '9' {
 		if b >= '0' {
-			p.HexShortBuffer[1] = b
-			p.onEvent(p, EVT_HEX_BYTE)
+			if !p.CaptureData {
+				return SIG_NEXT_BYTE
+			}
+			size := len(p.DataBuffer)
+			if !(size+1 >= cap(p.DataBuffer)) {
+				p.DataBuffer = p.DataBuffer[0 : size+2]
+			} else {
+				p.onData(p, DATA_CONTINUES)
+				p.DataBuffer = p.DataBuffer[0:2]
+			}
+			p.DataBuffer[size] = p.hexShortBuffer
+			size++
+			p.DataBuffer[size] = b
 			return SIG_NEXT_BYTE
 		}
 	} else {
 		if b >= 'a' {
 			if b <= 'f' {
-				p.HexShortBuffer[1] = b
-				p.onEvent(p, EVT_HEX_BYTE)
+				if !p.CaptureData {
+					return SIG_NEXT_BYTE
+				}
+				size := len(p.DataBuffer)
+				if !(size+1 >= cap(p.DataBuffer)) {
+					p.DataBuffer = p.DataBuffer[0 : size+2]
+				} else {
+					p.onData(p, DATA_CONTINUES)
+					p.DataBuffer = p.DataBuffer[0:2]
+				}
+				p.DataBuffer[size] = p.hexShortBuffer
+				size++
+				p.DataBuffer[size] = b
 				return SIG_NEXT_BYTE
 			}
 		} else if b >= 'A' && b <= 'F' {
-			p.HexShortBuffer[1] = b + ('a' - 'A')
-			p.onEvent(p, EVT_HEX_BYTE)
+			if !p.CaptureData {
+				return SIG_NEXT_BYTE
+			}
+			size := len(p.DataBuffer)
+			if !(size+1 >= cap(p.DataBuffer)) {
+				p.DataBuffer = p.DataBuffer[0 : size+2]
+			} else {
+				p.onData(p, DATA_CONTINUES)
+				p.DataBuffer = p.DataBuffer[0:2]
+			}
+			p.DataBuffer[size] = p.hexShortBuffer
+			size++
+			p.DataBuffer[size] = b
 			return SIG_NEXT_BYTE
 		}
 	}
@@ -603,7 +649,7 @@ func defaultOnEvent(parser *Parser, evt event_t) {
 	return
 }
 
-func defaultOnData(parser *Parser, b byte) {
+func defaultOnData(parser *Parser, b bool) {
 	return
 }
 
@@ -725,22 +771,33 @@ type Parser struct {
 
 	// END: configured calls
 
-	HexShortBuffer []byte
+	hexShortBuffer byte
 
 	literalStateIndex uint8
 	err               error
 	handleStack       []parserHandle_t
+	DataBuffer        []byte
+	CaptureData       bool
 }
 
-func NewParser() Parser {
+func NewParser(dataBuffer []byte) Parser {
 	self := Parser{
 		literalStateIndex: 1,
 		err:               nil,
 		UserData:          nil,
 		onEvent:           nil,
 		onData:            nil,
-		HexShortBuffer:    []byte{0, 0},
+		CaptureData:       false,
 	}
+	if dataBuffer == nil {
+		dataBuffer = make([]byte, MIN_DATA_BUFFER_SIZE)
+	} else {
+		if cap(dataBuffer) < MIN_DATA_BUFFER_SIZE {
+			dataBuffer = dataBuffer[0:MIN_DATA_BUFFER_SIZE]
+		}
+		dataBuffer = dataBuffer[:0]
+	}
+	self.DataBuffer = dataBuffer
 	// minimum nominal case will require 3 state levels
 	// TODO: allow for configuring this size parameter
 	self.handleStack = make([]parserHandle_t, 0, 3)
