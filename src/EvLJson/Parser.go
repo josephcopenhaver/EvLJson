@@ -73,7 +73,7 @@ func signalUnspecifiedError(p *Parser) signal_t {
 }
 
 func signalDataNextByte(p *Parser, b byte) signal_t {
-	if !p.CaptureData {
+	if p.OnData == nil {
 		return SIG_NEXT_BYTE
 	}
 	size := len(p.DataBuffer)
@@ -82,7 +82,7 @@ func signalDataNextByte(p *Parser, b byte) signal_t {
 		p.DataBuffer[size] = b
 		return SIG_NEXT_BYTE
 	}
-	p.onData(p, DATA_CONTINUES)
+	p.OnData(p, DATA_CONTINUES)
 	p.DataBuffer = p.DataBuffer[0:1]
 	p.DataBuffer[0] = b
 	return SIG_NEXT_BYTE
@@ -121,7 +121,9 @@ func popHandle(p *Parser) {
 		p.onEvent(p, EVT_LEAVE)
 		return
 	}
-	p.onData(p, DATA_END)
+	if p.OnData != nil {
+		p.OnData(p, DATA_END)
+	}
 	p.DataBuffer = p.DataBuffer[:0]
 	p.onEvent(p, EVT_LEAVE)
 }
@@ -410,14 +412,14 @@ func handleStringHexShortOdd(p *Parser, b byte) signal_t {
 	}
 	if b <= '9' {
 		if b >= '0' {
-			if !p.CaptureData {
+			if p.OnData == nil {
 				return SIG_NEXT_BYTE
 			}
 			size := len(p.DataBuffer)
 			if !(size+1 >= cap(p.DataBuffer)) {
 				p.DataBuffer = p.DataBuffer[0 : size+2]
 			} else {
-				p.onData(p, DATA_CONTINUES)
+				p.OnData(p, DATA_CONTINUES)
 				p.DataBuffer = p.DataBuffer[0:2]
 			}
 			p.DataBuffer[size] = p.hexShortBuffer
@@ -428,14 +430,14 @@ func handleStringHexShortOdd(p *Parser, b byte) signal_t {
 	} else {
 		if b >= 'a' {
 			if b <= 'f' {
-				if !p.CaptureData {
+				if p.OnData == nil {
 					return SIG_NEXT_BYTE
 				}
 				size := len(p.DataBuffer)
 				if !(size+1 >= cap(p.DataBuffer)) {
 					p.DataBuffer = p.DataBuffer[0 : size+2]
 				} else {
-					p.onData(p, DATA_CONTINUES)
+					p.OnData(p, DATA_CONTINUES)
 					p.DataBuffer = p.DataBuffer[0:2]
 				}
 				p.DataBuffer[size] = p.hexShortBuffer
@@ -444,14 +446,14 @@ func handleStringHexShortOdd(p *Parser, b byte) signal_t {
 				return SIG_NEXT_BYTE
 			}
 		} else if b >= 'A' && b <= 'F' {
-			if !p.CaptureData {
+			if p.OnData == nil {
 				return SIG_NEXT_BYTE
 			}
 			size := len(p.DataBuffer)
 			if !(size+1 >= cap(p.DataBuffer)) {
 				p.DataBuffer = p.DataBuffer[0 : size+2]
 			} else {
-				p.onData(p, DATA_CONTINUES)
+				p.OnData(p, DATA_CONTINUES)
 				p.DataBuffer = p.DataBuffer[0:2]
 			}
 			p.DataBuffer[size] = p.hexShortBuffer
@@ -649,17 +651,13 @@ func defaultOnEvent(parser *Parser, evt event_t) {
 	return
 }
 
-func defaultOnData(parser *Parser, b bool) {
-	return
-}
-
 const (
 	OPT_ALLOW_EXTRA_WHITESPACE = 0x01
 	OPT_STRICTER_EXPONENTS     = 0x02 // TODO: not implemented
 	OPT_PARSE_UNTIL_EOF        = 0x04
 )
 
-func (p *Parser) Parse(byteReader io.ByteReader, onEvent eventReceiver_t, onData dataReceiver_t, options uint8) error {
+func (p *Parser) Parse(byteReader io.ByteReader, onEvent eventReceiver_t, OnData dataReceiver_t, options uint8) error {
 	singleByte, err := byteReader.ReadByte()
 	if err != nil {
 		return err
@@ -669,12 +667,6 @@ func (p *Parser) Parse(byteReader io.ByteReader, onEvent eventReceiver_t, onData
 		p.onEvent = onEvent
 	} else {
 		p.onEvent = defaultOnEvent
-	}
-
-	if onData != nil {
-		p.onData = onData
-	} else {
-		p.onData = defaultOnData
 	}
 
 	if options&OPT_ALLOW_EXTRA_WHITESPACE == 0 {
@@ -755,7 +747,7 @@ type Parser struct {
 	handle   parserHandle_t
 	UserData interface{}
 	onEvent  eventReceiver_t
-	onData   dataReceiver_t
+	OnData   dataReceiver_t
 
 	// BEGIN: configured calls
 
@@ -777,7 +769,6 @@ type Parser struct {
 	err               error
 	handleStack       []parserHandle_t
 	DataBuffer        []byte
-	CaptureData       bool
 }
 
 func NewParser(dataBuffer []byte) Parser {
@@ -786,8 +777,7 @@ func NewParser(dataBuffer []byte) Parser {
 		err:               nil,
 		UserData:          nil,
 		onEvent:           nil,
-		onData:            nil,
-		CaptureData:       false,
+		OnData:            nil,
 	}
 	if dataBuffer == nil {
 		dataBuffer = make([]byte, MIN_DATA_BUFFER_SIZE)
