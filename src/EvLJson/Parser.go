@@ -39,8 +39,7 @@ const (
 	VALUE_STR_FALSE = "false"
 )
 const ( // event_t
-	EVT_NONE = iota
-	EVT_NULL
+	EVT_NULL = iota
 	EVT_TRUE
 	EVT_FALSE
 	EVT_ENTER // BEGIN: container list
@@ -128,6 +127,41 @@ func pushHandleEvent(p *Parser, newHandle parserHandle_t, evt event_t) {
 	}
 }
 
+func pushNewValueHandle(p *Parser, b byte) signal_t {
+	if b >= '1' && b <= '9' {
+		p.DataIsJsonNum = true
+		pushHandleEvent(p, handleInt, EVT_NUMBER)
+		return p.yieldToUserSig(SIG_NEXT_BYTE)
+	}
+	switch b {
+	case '0':
+		p.DataIsJsonNum = true
+		pushHandleEvent(p, handleZeroOrDecimalOrExponentStart, EVT_NUMBER)
+	case '[':
+		pushHandleEvent(p, handleArrayExpectFirstEntryOrEnd, EVT_ARRAY)
+	case '{':
+		pushHandleEvent(p, handleDictExpectFirstKeyOrEnd, EVT_DICT)
+	case VALUE_STR_NULL[0]:
+		pushHandle(p, handleNull)
+		return SIG_NEXT_BYTE
+	case VALUE_STR_FALSE[0]:
+		pushHandle(p, handleFalse)
+		return SIG_NEXT_BYTE
+	case VALUE_STR_TRUE[0]:
+		pushHandle(p, handleTrue)
+		return SIG_NEXT_BYTE
+	case '"':
+		p.DataIsJsonNum = false
+		pushHandleEvent(p, handleString, EVT_STRING)
+	case '-':
+		p.DataIsJsonNum = true
+		pushHandleEvent(p, handleZeroOrDecimalOrExponentNegativeStart, EVT_NUMBER)
+	default:
+		return signalUnspecifiedError(p)
+	}
+	return p.yieldToUserSig(SIG_NEXT_BYTE)
+}
+
 func popHandle(p *Parser) {
 	newMaxIdx := len(p.handleStack) - 1
 	p.handle, p.handleStack = p.handleStack[newMaxIdx], p.handleStack[:newMaxIdx]
@@ -148,36 +182,6 @@ func popHandleEvent(p *Parser) {
 	}
 	p.DataBuffer = p.DataBuffer[:0]
 	p.onEvent(p, EVT_LEAVE)
-}
-
-func getNewValueHandle(p *Parser, b byte) (parserHandle_t, event_t) {
-	if b >= '1' && b <= '9' {
-		p.DataIsJsonNum = true
-		return handleInt, EVT_NUMBER
-	}
-	switch b {
-	case '0':
-		p.DataIsJsonNum = true
-		return handleZeroOrDecimalOrExponentStart, EVT_NUMBER
-	case '[':
-		return handleArrayExpectFirstEntryOrEnd, EVT_ARRAY
-	case '{':
-		return handleDictExpectFirstKeyOrEnd, EVT_DICT
-	case VALUE_STR_NULL[0]:
-		return handleNull, EVT_NONE
-	case VALUE_STR_FALSE[0]:
-		return handleFalse, EVT_NONE
-	case VALUE_STR_TRUE[0]:
-		return handleTrue, EVT_NONE
-	case '"':
-		p.DataIsJsonNum = false
-		return handleString, EVT_STRING
-	case '-':
-		p.DataIsJsonNum = true
-		return handleZeroOrDecimalOrExponentNegativeStart, EVT_NUMBER
-	default:
-		return nil, EVT_NONE
-	}
 }
 
 func handleStart(p *Parser, b byte) signal_t {
@@ -560,18 +564,8 @@ func handleDictExpectKeyValueDelim(p *Parser, b byte) signal_t {
 }
 
 func handleDictExpectValue(p *Parser, b byte) signal_t {
-	if newHandle, newEvent := getNewValueHandle(p, b); newHandle != nil {
-		p.handle = p.handleDictExpectEntryDelimOrEnd
-		switch newEvent {
-		case EVT_NONE:
-			pushHandle(p, newHandle)
-			return SIG_NEXT_BYTE
-		default:
-			pushHandleEvent(p, newHandle, newEvent)
-			return p.yieldToUserSig(SIG_NEXT_BYTE)
-		}
-	}
-	return signalUnspecifiedError(p)
+	p.handle = p.handleDictExpectEntryDelimOrEnd
+	return pushNewValueHandle(p, b)
 }
 
 func handleDictExpectEntryDelimOrEnd(p *Parser, b byte) signal_t {
@@ -597,18 +591,8 @@ func handleDictExpectKey(p *Parser, b byte) signal_t {
 
 func handleArrayExpectFirstEntryOrEnd(p *Parser, b byte) signal_t {
 	if b != ']' {
-		if newHandle, newEvent := getNewValueHandle(p, b); newHandle != nil {
-			p.handle = p.handleArrayExpectDelimOrEnd
-			switch newEvent {
-			case EVT_NONE:
-				pushHandle(p, newHandle)
-				return SIG_NEXT_BYTE
-			default:
-				pushHandleEvent(p, newHandle, newEvent)
-				return p.yieldToUserSig(SIG_NEXT_BYTE)
-			}
-		}
-		return signalUnspecifiedError(p)
+		p.handle = p.handleArrayExpectDelimOrEnd
+		return pushNewValueHandle(p, b)
 	}
 	popHandleEvent(p)
 	return p.yieldToUserSig(SIG_NEXT_BYTE)
@@ -627,18 +611,8 @@ func handleArrayExpectDelimOrEnd(p *Parser, b byte) signal_t {
 }
 
 func handleArrayExpectEntry(p *Parser, b byte) signal_t {
-	if newHandle, newEvent := getNewValueHandle(p, b); newHandle != nil {
-		p.handle = p.handleArrayExpectDelimOrEnd
-		switch newEvent {
-		case EVT_NONE:
-			pushHandle(p, newHandle)
-			return SIG_NEXT_BYTE
-		default:
-			pushHandleEvent(p, newHandle, newEvent)
-			return p.yieldToUserSig(SIG_NEXT_BYTE)
-		}
-	}
-	return signalUnspecifiedError(p)
+	p.handle = p.handleArrayExpectDelimOrEnd
+	return pushNewValueHandle(p, b)
 }
 
 func handleEnd(p *Parser, b byte) signal_t {
