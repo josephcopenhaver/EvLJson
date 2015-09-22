@@ -58,6 +58,7 @@ type event_t uint8
 type eventReceiver_t func(parser *Parser, evt event_t)
 type dataReceiver_t func(parser *Parser, endOfData bool)
 type parserHandle_t func(p *Parser, b byte) signal_t
+type userSig_t func(normalSignal signal_t) signal_t
 type UnspecifiedJsonParserError struct{}
 
 func (err UnspecifiedJsonParserError) Error() string {
@@ -66,12 +67,13 @@ func (err UnspecifiedJsonParserError) Error() string {
 
 var unspecifiedParserError = UnspecifiedJsonParserError{}
 
-func yieldToUserSig(p *Parser, normalSignal signal_t) signal_t {
-	if p.userSignal == SIG_STOP {
-		return SIG_STOP
-	}
-	return normalSignal
+type InvalidStricterExponentFormat struct{}
+
+func (err InvalidStricterExponentFormat) Error() string {
+	return "OPT_STRICTER_EXPONENTS is on: More than one leading zero in exponent"
 }
+
+var invalidStricterExponentFormat = InvalidStricterExponentFormat{}
 
 func signalUnspecifiedError(p *Parser) signal_t {
 	p.err = unspecifiedParserError
@@ -178,11 +180,11 @@ func handleStart(p *Parser, b byte) signal_t {
 	p.handle = p.handleEnd
 	if b == '[' {
 		pushHandleEvent(p, p.handleArrayExpectFirstEntryOrEnd, EVT_ARRAY)
-		return yieldToUserSig(p, SIG_NEXT_BYTE)
+		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	if b == '{' {
 		pushHandleEvent(p, p.handleDictExpectFirstKeyOrEnd, EVT_DICT)
-		return yieldToUserSig(p, SIG_NEXT_BYTE)
+		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
 }
@@ -199,7 +201,7 @@ func handleNull(p *Parser, b byte) signal_t {
 			return SIG_STOP
 		}
 		p.onEvent(p, EVT_NULL)
-		return yieldToUserSig(p, SIG_NEXT_BYTE)
+		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
 }
@@ -216,7 +218,7 @@ func handleTrue(p *Parser, b byte) signal_t {
 			return SIG_STOP
 		}
 		p.onEvent(p, EVT_TRUE)
-		return yieldToUserSig(p, SIG_NEXT_BYTE)
+		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
 }
@@ -233,7 +235,7 @@ func handleFalse(p *Parser, b byte) signal_t {
 			return SIG_STOP
 		}
 		p.onEvent(p, EVT_FALSE)
-		return yieldToUserSig(p, SIG_NEXT_BYTE)
+		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
 }
@@ -256,7 +258,7 @@ func handleZeroOrDecimalOrExponentStart(p *Parser, b byte) signal_t {
 		return signalDataNextByte(p, b)
 	default:
 		popHandle(p)
-		return yieldToUserSig(p, SIG_REUSE_BYTE)
+		return p.yieldToUserSig(SIG_REUSE_BYTE)
 	}
 }
 
@@ -281,7 +283,7 @@ func handleInt(p *Parser, b byte) signal_t {
 		return signalDataNextByte(p, b)
 	}
 	popHandle(p)
-	return yieldToUserSig(p, SIG_REUSE_BYTE)
+	return p.yieldToUserSig(SIG_REUSE_BYTE)
 }
 
 func handleZeroOrDecimalOrExponentNegativeStart(p *Parser, b byte) signal_t {
@@ -302,7 +304,7 @@ func handleDecimalFractionalStart(p *Parser, b byte) signal_t {
 		return signalDataNextByte(p, b)
 	}
 	popHandle(p)
-	return yieldToUserSig(p, SIG_REUSE_BYTE)
+	return p.yieldToUserSig(SIG_REUSE_BYTE)
 }
 
 func handleDecimalFractionalEnd(p *Parser, b byte) signal_t {
@@ -318,7 +320,7 @@ func handleDecimalFractionalEnd(p *Parser, b byte) signal_t {
 		return signalDataNextByte(p, b)
 	}
 	popHandle(p)
-	return yieldToUserSig(p, SIG_REUSE_BYTE)
+	return p.yieldToUserSig(SIG_REUSE_BYTE)
 }
 
 func handleExponentCoefficientStart(p *Parser, b byte) signal_t {
@@ -358,7 +360,7 @@ func handleExponentCoefficientLeadingZero(p *Parser, b byte) signal_t {
 		return signalDataNextByte(p, b)
 	}
 	popHandle(p)
-	return yieldToUserSig(p, SIG_REUSE_BYTE)
+	return p.yieldToUserSig(SIG_REUSE_BYTE)
 }
 
 func handleExponentCoefficientStricterLeadingZero(p *Parser, b byte) signal_t {
@@ -367,10 +369,11 @@ func handleExponentCoefficientStricterLeadingZero(p *Parser, b byte) signal_t {
 		return signalDataNextByte(p, b)
 	}
 	if b == '0' {
-		return signalDataNextByte(p, b)
+		p.err = invalidStricterExponentFormat
+		return SIG_ERR
 	}
 	popHandle(p)
-	return yieldToUserSig(p, SIG_REUSE_BYTE)
+	return p.yieldToUserSig(SIG_REUSE_BYTE)
 }
 
 func handleExponentCoefficientEnd(p *Parser, b byte) signal_t {
@@ -378,7 +381,7 @@ func handleExponentCoefficientEnd(p *Parser, b byte) signal_t {
 		return signalDataNextByte(p, b)
 	}
 	popHandle(p)
-	return yieldToUserSig(p, SIG_REUSE_BYTE)
+	return p.yieldToUserSig(SIG_REUSE_BYTE)
 }
 
 func handleString(p *Parser, b byte) signal_t {
@@ -390,7 +393,7 @@ func handleString(p *Parser, b byte) signal_t {
 	case '"':
 		// end of string
 		popHandle(p)
-		return yieldToUserSig(p, SIG_NEXT_BYTE)
+		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	default:
 		return signalDataNextByte(p, b)
 	}
@@ -488,14 +491,6 @@ func handleStringHexShortEven(p *Parser, b byte) signal_t {
 }
 
 func handleStringHexShortOdd(p *Parser, b byte) signal_t {
-	literalStateIndex := p.literalStateIndex
-	if literalStateIndex == 1 {
-		p.literalStateIndex = 0
-		p.handle = handleStringHexShortEven
-	} else {
-		p.literalStateIndex = 1
-		p.handle = handleString
-	}
 	for true {
 		if b <= '9' {
 			if b >= '0' {
@@ -515,10 +510,16 @@ func handleStringHexShortOdd(p *Parser, b byte) signal_t {
 	}
 	var err error
 	decodedBytes := []byte{0}
+	literalStateIndex := p.literalStateIndex
 	if _, err = hex.Decode(decodedBytes, []byte{p.hexShortBuffer[literalStateIndex], b}); err == nil {
 		if literalStateIndex == 1 {
+			p.literalStateIndex = 0
+			p.handle = handleStringHexShortEven
 			p.hexShortBuffer[1] = decodedBytes[0]
 			return SIG_NEXT_BYTE
+		} else {
+			p.literalStateIndex = 1
+			p.handle = handleString
 		}
 		size := len(p.DataBuffer)
 		if !(size+1 >= cap(p.DataBuffer)) {
@@ -547,10 +548,10 @@ func handleDictExpectFirstKeyOrEnd(p *Parser, b byte) signal_t {
 	case '"':
 		p.handle = p.handleDictExpectKeyValueDelim
 		pushHandleEvent(p, handleString, EVT_STRING)
-		return yieldToUserSig(p, SIG_NEXT_BYTE)
+		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	case '}':
 		popHandle(p)
-		return yieldToUserSig(p, SIG_NEXT_BYTE)
+		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
 }
@@ -572,7 +573,7 @@ func handleDictExpectValue(p *Parser, b byte) signal_t {
 			return SIG_NEXT_BYTE
 		default:
 			pushHandleEvent(p, newHandle, newEvent)
-			return yieldToUserSig(p, SIG_NEXT_BYTE)
+			return p.yieldToUserSig(SIG_NEXT_BYTE)
 		}
 	}
 	return signalUnspecifiedError(p)
@@ -585,7 +586,7 @@ func handleDictExpectEntryDelimOrEnd(p *Parser, b byte) signal_t {
 		return SIG_NEXT_BYTE
 	case '}':
 		popHandle(p)
-		return yieldToUserSig(p, SIG_NEXT_BYTE)
+		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
 }
@@ -594,7 +595,7 @@ func handleDictExpectKey(p *Parser, b byte) signal_t {
 	if b == '"' {
 		p.handle = p.handleDictExpectKeyValueDelim
 		pushHandleEvent(p, handleString, EVT_STRING)
-		return yieldToUserSig(p, SIG_NEXT_BYTE)
+		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
 }
@@ -609,13 +610,13 @@ func handleArrayExpectFirstEntryOrEnd(p *Parser, b byte) signal_t {
 				return SIG_NEXT_BYTE
 			default:
 				pushHandleEvent(p, newHandle, newEvent)
-				return yieldToUserSig(p, SIG_NEXT_BYTE)
+				return p.yieldToUserSig(SIG_NEXT_BYTE)
 			}
 		}
 		return signalUnspecifiedError(p)
 	}
 	popHandle(p)
-	return yieldToUserSig(p, SIG_NEXT_BYTE)
+	return p.yieldToUserSig(SIG_NEXT_BYTE)
 }
 
 func handleArrayExpectDelimOrEnd(p *Parser, b byte) signal_t {
@@ -625,7 +626,7 @@ func handleArrayExpectDelimOrEnd(p *Parser, b byte) signal_t {
 		return SIG_NEXT_BYTE
 	case ']':
 		popHandle(p)
-		return yieldToUserSig(p, SIG_NEXT_BYTE)
+		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
 }
@@ -639,7 +640,7 @@ func handleArrayExpectEntry(p *Parser, b byte) signal_t {
 			return SIG_NEXT_BYTE
 		default:
 			pushHandleEvent(p, newHandle, newEvent)
-			return yieldToUserSig(p, SIG_NEXT_BYTE)
+			return p.yieldToUserSig(SIG_NEXT_BYTE)
 		}
 	}
 	return signalUnspecifiedError(p)
@@ -731,6 +732,14 @@ func defaultOnEvent(parser *Parser, evt event_t) {
 	return
 }
 
+func userSigNone(normalSignal signal_t) signal_t {
+	return normalSignal
+}
+
+func userSigStop(normalSignal signal_t) signal_t {
+	return SIG_STOP
+}
+
 const (
 	OPT_ALLOW_EXTRA_WHITESPACE = 0x01
 	OPT_STRICTER_EXPONENTS     = 0x02
@@ -739,6 +748,7 @@ const (
 
 func (p *Parser) ParseStop() {
 	p.userSignal = SIG_STOP
+	p.yieldToUserSig = userSigStop
 }
 
 func (p *Parser) Parse(byteReader io.ByteReader, onEvent eventReceiver_t, onData dataReceiver_t, options uint8) error {
@@ -862,6 +872,7 @@ type Parser struct {
 	DataIsJsonNum     bool
 	literalStateIndex uint8
 	userSignal        signal_t
+	yieldToUserSig    userSig_t
 	err               error
 }
 
@@ -875,6 +886,7 @@ func NewParser(dataBuffer []byte, typeDepthHint int) Parser {
 		hexShortBuffer:    make([]byte, 2),
 		DataIsJsonNum:     false,
 		userSignal:        SIG_NEXT_BYTE,
+		yieldToUserSig:    userSigNone,
 	}
 	if dataBuffer == nil {
 		dataBuffer = make([]byte, MIN_DATA_BUFFER_SIZE)
