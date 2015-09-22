@@ -128,10 +128,14 @@ func pushHandleEvent(p *Parser, newHandle parserHandle_t, evt event_t) {
 	}
 }
 
-// Note: user can signal within this function
 func popHandle(p *Parser) {
 	newMaxIdx := len(p.handleStack) - 1
 	p.handle, p.handleStack = p.handleStack[newMaxIdx], p.handleStack[:newMaxIdx]
+}
+
+// Note: user can signal within this function
+func popHandleEvent(p *Parser) {
+	popHandle(p)
 	if len(p.DataBuffer) == 0 {
 		p.onEvent(p, EVT_LEAVE)
 		return
@@ -197,9 +201,6 @@ func handleNull(p *Parser, b byte) signal_t {
 		}
 		p.literalStateIndex = 1
 		popHandle(p)
-		if p.userSignal == SIG_STOP {
-			return SIG_STOP
-		}
 		p.onEvent(p, EVT_NULL)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
@@ -214,9 +215,6 @@ func handleTrue(p *Parser, b byte) signal_t {
 		}
 		p.literalStateIndex = 1
 		popHandle(p)
-		if p.userSignal == SIG_STOP {
-			return SIG_STOP
-		}
 		p.onEvent(p, EVT_TRUE)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
@@ -231,9 +229,6 @@ func handleFalse(p *Parser, b byte) signal_t {
 		}
 		p.literalStateIndex = 1
 		popHandle(p)
-		if p.userSignal == SIG_STOP {
-			return SIG_STOP
-		}
 		p.onEvent(p, EVT_FALSE)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
@@ -257,7 +252,7 @@ func handleZeroOrDecimalOrExponentStart(p *Parser, b byte) signal_t {
 		p.handle = handleExponentCoefficientStart
 		return signalDataNextByte(p, b)
 	default:
-		popHandle(p)
+		popHandleEvent(p)
 		return p.yieldToUserSig(SIG_REUSE_BYTE)
 	}
 }
@@ -282,7 +277,7 @@ func handleInt(p *Parser, b byte) signal_t {
 		p.handle = handleExponentCoefficientStart
 		return signalDataNextByte(p, b)
 	}
-	popHandle(p)
+	popHandleEvent(p)
 	return p.yieldToUserSig(SIG_REUSE_BYTE)
 }
 
@@ -303,7 +298,7 @@ func handleDecimalFractionalStart(p *Parser, b byte) signal_t {
 		p.handle = handleDecimalFractionalEnd
 		return signalDataNextByte(p, b)
 	}
-	popHandle(p)
+	popHandleEvent(p)
 	return p.yieldToUserSig(SIG_REUSE_BYTE)
 }
 
@@ -319,7 +314,7 @@ func handleDecimalFractionalEnd(p *Parser, b byte) signal_t {
 		p.handle = handleExponentCoefficientStart
 		return signalDataNextByte(p, b)
 	}
-	popHandle(p)
+	popHandleEvent(p)
 	return p.yieldToUserSig(SIG_REUSE_BYTE)
 }
 
@@ -359,7 +354,7 @@ func handleExponentCoefficientLeadingZero(p *Parser, b byte) signal_t {
 	if b == '0' {
 		return signalDataNextByte(p, b)
 	}
-	popHandle(p)
+	popHandleEvent(p)
 	return p.yieldToUserSig(SIG_REUSE_BYTE)
 }
 
@@ -372,7 +367,7 @@ func handleExponentCoefficientStricterLeadingZero(p *Parser, b byte) signal_t {
 		p.err = invalidStricterExponentFormat
 		return SIG_ERR
 	}
-	popHandle(p)
+	popHandleEvent(p)
 	return p.yieldToUserSig(SIG_REUSE_BYTE)
 }
 
@@ -380,7 +375,7 @@ func handleExponentCoefficientEnd(p *Parser, b byte) signal_t {
 	if b >= '0' && b <= '9' {
 		return signalDataNextByte(p, b)
 	}
-	popHandle(p)
+	popHandleEvent(p)
 	return p.yieldToUserSig(SIG_REUSE_BYTE)
 }
 
@@ -392,7 +387,7 @@ func handleString(p *Parser, b byte) signal_t {
 		return SIG_NEXT_BYTE
 	case '"':
 		// end of string
-		popHandle(p)
+		popHandleEvent(p)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	default:
 		return signalDataNextByte(p, b)
@@ -550,7 +545,7 @@ func handleDictExpectFirstKeyOrEnd(p *Parser, b byte) signal_t {
 		pushHandleEvent(p, handleString, EVT_STRING)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	case '}':
-		popHandle(p)
+		popHandleEvent(p)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
@@ -585,7 +580,7 @@ func handleDictExpectEntryDelimOrEnd(p *Parser, b byte) signal_t {
 		p.handle = p.handleDictExpectKey
 		return SIG_NEXT_BYTE
 	case '}':
-		popHandle(p)
+		popHandleEvent(p)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
@@ -615,7 +610,7 @@ func handleArrayExpectFirstEntryOrEnd(p *Parser, b byte) signal_t {
 		}
 		return signalUnspecifiedError(p)
 	}
-	popHandle(p)
+	popHandleEvent(p)
 	return p.yieldToUserSig(SIG_NEXT_BYTE)
 }
 
@@ -625,7 +620,7 @@ func handleArrayExpectDelimOrEnd(p *Parser, b byte) signal_t {
 		p.handle = p.handleArrayExpectEntry
 		return SIG_NEXT_BYTE
 	case ']':
-		popHandle(p)
+		popHandleEvent(p)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
