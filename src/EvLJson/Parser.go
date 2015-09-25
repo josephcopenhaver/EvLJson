@@ -119,10 +119,10 @@ func pushHandle(p *Parser, newHandle parserHandle_t) {
 }
 
 // Note: user can signal within this function
-func pushHandleEvent(p *Parser, newHandle parserHandle_t, evt event_t) {
-	pushHandle(p, newHandle)
+func pushEnterHandle(p *Parser, newHandle parserHandle_t, evt event_t) {
 	p.onEvent(p, EVT_ENTER)
 	if p.userSignal != SIG_STOP {
+		pushHandle(p, newHandle)
 		p.onEvent(p, evt)
 	}
 }
@@ -130,32 +130,35 @@ func pushHandleEvent(p *Parser, newHandle parserHandle_t, evt event_t) {
 func pushNewValueHandle(p *Parser, b byte) signal_t {
 	if b >= '1' && b <= '9' {
 		p.DataIsJsonNum = true
-		pushHandleEvent(p, handleInt, EVT_NUMBER)
+		pushEnterHandle(p, handleInt, EVT_NUMBER)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	switch b {
 	case '0':
 		p.DataIsJsonNum = true
-		pushHandleEvent(p, handleZeroOrDecimalOrExponentStart, EVT_NUMBER)
+		pushEnterHandle(p, handleZeroOrDecimalOrExponentStart, EVT_NUMBER)
 	case '[':
-		pushHandleEvent(p, handleArrayExpectFirstEntryOrEnd, EVT_ARRAY)
+		pushEnterHandle(p, handleArrayExpectFirstEntryOrEnd, EVT_ARRAY)
 	case '{':
-		pushHandleEvent(p, handleDictExpectFirstKeyOrEnd, EVT_DICT)
+		pushEnterHandle(p, handleDictExpectFirstKeyOrEnd, EVT_DICT)
 	case VALUE_STR_NULL[0]:
+		p.onEvent(p, EVT_NULL)
 		pushHandle(p, handleNull)
-		return SIG_NEXT_BYTE
+		break
 	case VALUE_STR_FALSE[0]:
+		p.onEvent(p, EVT_FALSE)
 		pushHandle(p, handleFalse)
-		return SIG_NEXT_BYTE
+		break
 	case VALUE_STR_TRUE[0]:
+		p.onEvent(p, EVT_TRUE)
 		pushHandle(p, handleTrue)
-		return SIG_NEXT_BYTE
+		break
 	case '"':
 		p.DataIsJsonNum = false
-		pushHandleEvent(p, handleString, EVT_STRING)
+		pushEnterHandle(p, handleString, EVT_STRING)
 	case '-':
 		p.DataIsJsonNum = true
-		pushHandleEvent(p, handleZeroOrDecimalOrExponentNegativeStart, EVT_NUMBER)
+		pushEnterHandle(p, handleZeroOrDecimalOrExponentNegativeStart, EVT_NUMBER)
 	default:
 		return signalUnspecifiedError(p)
 	}
@@ -187,11 +190,11 @@ func popHandleEvent(p *Parser) {
 func handleStart(p *Parser, b byte) signal_t {
 	p.handle = p.handleEnd
 	if b == '[' {
-		pushHandleEvent(p, p.handleArrayExpectFirstEntryOrEnd, EVT_ARRAY)
+		pushEnterHandle(p, p.handleArrayExpectFirstEntryOrEnd, EVT_ARRAY)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	if b == '{' {
-		pushHandleEvent(p, p.handleDictExpectFirstKeyOrEnd, EVT_DICT)
+		pushEnterHandle(p, p.handleDictExpectFirstKeyOrEnd, EVT_DICT)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
@@ -205,8 +208,7 @@ func handleNull(p *Parser, b byte) signal_t {
 		}
 		p.literalStateIndex = 1
 		popHandle(p)
-		p.onEvent(p, EVT_NULL)
-		return p.yieldToUserSig(SIG_NEXT_BYTE)
+		return SIG_NEXT_BYTE
 	}
 	return signalUnspecifiedError(p)
 }
@@ -219,8 +221,7 @@ func handleTrue(p *Parser, b byte) signal_t {
 		}
 		p.literalStateIndex = 1
 		popHandle(p)
-		p.onEvent(p, EVT_TRUE)
-		return p.yieldToUserSig(SIG_NEXT_BYTE)
+		return SIG_NEXT_BYTE
 	}
 	return signalUnspecifiedError(p)
 }
@@ -233,8 +234,7 @@ func handleFalse(p *Parser, b byte) signal_t {
 		}
 		p.literalStateIndex = 1
 		popHandle(p)
-		p.onEvent(p, EVT_FALSE)
-		return p.yieldToUserSig(SIG_NEXT_BYTE)
+		return SIG_NEXT_BYTE
 	}
 	return signalUnspecifiedError(p)
 }
@@ -546,7 +546,7 @@ func handleDictExpectFirstKeyOrEnd(p *Parser, b byte) signal_t {
 	switch b {
 	case '"':
 		p.handle = p.handleDictExpectKeyValueDelim
-		pushHandleEvent(p, handleString, EVT_STRING)
+		pushEnterHandle(p, handleString, EVT_STRING)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	case '}':
 		popHandleEvent(p)
@@ -583,7 +583,7 @@ func handleDictExpectEntryDelimOrEnd(p *Parser, b byte) signal_t {
 func handleDictExpectKey(p *Parser, b byte) signal_t {
 	if b == '"' {
 		p.handle = p.handleDictExpectKeyValueDelim
-		pushHandleEvent(p, handleString, EVT_STRING)
+		pushEnterHandle(p, handleString, EVT_STRING)
 		return p.yieldToUserSig(SIG_NEXT_BYTE)
 	}
 	return signalUnspecifiedError(p)
