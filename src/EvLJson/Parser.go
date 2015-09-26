@@ -90,12 +90,12 @@ func signalDataNextByte(p *Parser, b byte) signal_t {
 		return SIG_NEXT_BYTE
 	}
 	p.OnData(p, DATA_CONTINUES)
-	if p.userSignal == SIG_STOP {
-		return SIG_STOP
+	if p.userSignal != SIG_STOP {
+		p.DataBuffer = p.DataBuffer[0:1]
+		p.DataBuffer[0] = b
+		return SIG_NEXT_BYTE
 	}
-	p.DataBuffer = p.DataBuffer[0:1]
-	p.DataBuffer[0] = b
-	return SIG_NEXT_BYTE
+	return SIG_STOP
 }
 
 func isCharWhitespace(b byte) bool {
@@ -179,10 +179,12 @@ func popHandleEvent(p *Parser) {
 	}
 	if p.OnData != nil {
 		p.OnData(p, DATA_END)
-		if p.userSignal == SIG_STOP {
-			return
+		if p.userSignal != SIG_STOP {
+			goto FIRE_LEAVE_EVT
 		}
+		return
 	}
+FIRE_LEAVE_EVT:
 	p.DataBuffer = p.DataBuffer[:0]
 	p.onEvent(p, EVT_LEAVE)
 }
@@ -243,18 +245,18 @@ func handleZeroOrDecimalOrExponentStart(p *Parser, b byte) signal_t {
 	switch b {
 	case '.':
 		p.onEvent(p, EVT_DECIMAL)
-		if p.userSignal == SIG_STOP {
-			return SIG_STOP
+		if p.userSignal != SIG_STOP {
+			p.handle = handleDecimalFractionalStart
+			return signalDataNextByte(p, b)
 		}
-		p.handle = handleDecimalFractionalStart
-		return signalDataNextByte(p, b)
+		return SIG_STOP
 	case 'e':
 		p.onEvent(p, EVT_EXPONENT)
-		if p.userSignal == SIG_STOP {
-			return SIG_STOP
+		if p.userSignal != SIG_STOP {
+			p.handle = handleExponentCoefficientStart
+			return signalDataNextByte(p, b)
 		}
-		p.handle = handleExponentCoefficientStart
-		return signalDataNextByte(p, b)
+		return SIG_STOP
 	default:
 		popHandleEvent(p)
 		return p.yieldToUserSig(SIG_REUSE_BYTE)
@@ -268,18 +270,18 @@ func handleInt(p *Parser, b byte) signal_t {
 	switch b {
 	case '.':
 		p.onEvent(p, EVT_DECIMAL)
-		if p.userSignal == SIG_STOP {
-			return SIG_STOP
+		if p.userSignal != SIG_STOP {
+			p.handle = handleDecimalFractionalStart
+			return signalDataNextByte(p, b)
 		}
-		p.handle = handleDecimalFractionalStart
-		return signalDataNextByte(p, b)
+		return SIG_STOP
 	case 'e':
 		p.onEvent(p, EVT_EXPONENT)
-		if p.userSignal == SIG_STOP {
-			return SIG_STOP
+		if p.userSignal != SIG_STOP {
+			p.handle = handleExponentCoefficientStart
+			return signalDataNextByte(p, b)
 		}
-		p.handle = handleExponentCoefficientStart
-		return signalDataNextByte(p, b)
+		return SIG_STOP
 	}
 	popHandleEvent(p)
 	return p.yieldToUserSig(SIG_REUSE_BYTE)
@@ -312,11 +314,11 @@ func handleDecimalFractionalEnd(p *Parser, b byte) signal_t {
 		return signalDataNextByte(p, b)
 	case b == 'e':
 		p.onEvent(p, EVT_EXPONENT)
-		if p.userSignal == SIG_STOP {
-			return SIG_STOP
+		if p.userSignal != SIG_STOP {
+			p.handle = handleExponentCoefficientStart
+			return signalDataNextByte(p, b)
 		}
-		p.handle = handleExponentCoefficientStart
-		return signalDataNextByte(p, b)
+		return SIG_STOP
 	}
 	popHandleEvent(p)
 	return p.yieldToUserSig(SIG_REUSE_BYTE)
@@ -529,13 +531,13 @@ func handleStringHexShortOdd(p *Parser, b byte) signal_t {
 			return SIG_NEXT_BYTE
 		} else {
 			p.OnData(p, DATA_CONTINUES)
-			if p.userSignal == SIG_STOP {
-				return SIG_STOP
+			if p.userSignal != SIG_STOP {
+				p.DataBuffer = p.DataBuffer[0:2]
+				p.DataBuffer[0] = p.hexShortBuffer[1]
+				p.DataBuffer[1] = decodedBytes[0]
+				return SIG_NEXT_BYTE
 			}
-			p.DataBuffer = p.DataBuffer[0:2]
-			p.DataBuffer[0] = p.hexShortBuffer[1]
-			p.DataBuffer[1] = decodedBytes[0]
-			return SIG_NEXT_BYTE
+			return SIG_STOP
 		}
 	}
 	p.err = err
