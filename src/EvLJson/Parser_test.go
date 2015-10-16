@@ -86,6 +86,10 @@ func TestStrangeValidJson(t *testing.T) {
 	*/
 	testCases := []string{
 		"[-0]",
+		"[0e0]",
+		"[-0e0]",
+		"[0e-0]",
+		"[-0e-0]",
 		"[0.0e0]",
 		"[0.0e00]",
 		"[0.0e001]",
