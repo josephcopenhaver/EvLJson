@@ -98,19 +98,16 @@ func signalDataNextByte(p *Parser, b byte) signal_t {
 	return SIG_STOP
 }
 
+var whitespaces = map[byte]interface{}{
+	0x20: nil, // SPACE
+	0x09: nil, // TAB
+	0x0A: nil, // LF
+	0x0D: nil, // CR
+}
+
 func isCharWhitespace(b byte) bool {
-	switch b {
-	case 0x20: // SPACE
-		fallthrough
-	case 0x09: // TAB
-		fallthrough
-	case 0x0A: // LF
-		fallthrough
-	case 0x0D: // CR
-		return true
-	default:
-		return false
-	}
+	_, exists := whitespaces[b]
+	return exists
 }
 
 func pushHandle(p *Parser, newHandle parserHandle_t) {
@@ -144,15 +141,12 @@ func pushNewValueHandle(p *Parser, b byte) signal_t {
 	case VALUE_STR_NULL[0]:
 		p.onEvent(p, EVT_NULL)
 		pushHandle(p, handleNull)
-		break
 	case VALUE_STR_FALSE[0]:
 		p.onEvent(p, EVT_FALSE)
 		pushHandle(p, handleFalse)
-		break
 	case VALUE_STR_TRUE[0]:
 		p.onEvent(p, EVT_TRUE)
 		pushHandle(p, handleTrue)
-		break
 	case '"':
 		p.DataIsJsonNum = false
 		pushEnterHandle(p, handleString, EVT_STRING)
@@ -443,72 +437,96 @@ UNESCAPED:
 	return signalDataNextByte(p, b)
 }
 
-func handleStringHexShortNoReporting(p *Parser, b byte) signal_t {
-	for true {
-		if b <= '9' {
-			if b >= '0' {
-				break
-			}
-		} else {
-			if b >= 'a' {
-				if b <= 'f' {
-					break
-				}
-			} else if b >= 'A' && b <= 'F' {
-				break
-			}
-		}
-		return signalUnspecifiedError(p)
-	}
-	literalStateIndex := p.literalStateIndex + 1
-	if literalStateIndex != 5 {
-		p.literalStateIndex = literalStateIndex
-		return SIG_NEXT_BYTE
-	}
-	p.handle = handleString
-	p.literalStateIndex = 1
-	return SIG_NEXT_BYTE
+var allhexchars = map[byte]interface{}{
+	'0': nil,
+	'1': nil,
+	'2': nil,
+	'3': nil,
+	'4': nil,
+	'5': nil,
+	'6': nil,
+	'7': nil,
+	'8': nil,
+	'9': nil,
+	'a': nil,
+	'b': nil,
+	'c': nil,
+	'd': nil,
+	'e': nil,
+	'f': nil,
+	'A': nil,
+	'B': nil,
+	'C': nil,
+	'D': nil,
+	'E': nil,
+	'F': nil,
 }
 
-func handleStringHexShortEven(p *Parser, b byte) signal_t {
-	p.handle = handleStringHexShortOdd
-	if b <= '9' {
-		if b >= '0' {
-			p.hexShortBuffer[p.literalStateIndex] = b
+var caphexchars = map[byte]interface{}{
+	'A': nil,
+	'B': nil,
+	'C': nil,
+	'D': nil,
+	'E': nil,
+	'F': nil,
+}
+
+var lowerhexchars = map[byte]interface{}{
+	'0': nil,
+	'1': nil,
+	'2': nil,
+	'3': nil,
+	'4': nil,
+	'5': nil,
+	'6': nil,
+	'7': nil,
+	'8': nil,
+	'9': nil,
+	'a': nil,
+	'b': nil,
+	'c': nil,
+	'd': nil,
+	'e': nil,
+	'f': nil,
+}
+
+func handleStringHexShortNoReporting(p *Parser, b byte) signal_t {
+	if _, exists := allhexchars[b]; exists {
+		literalStateIndex := p.literalStateIndex + 1
+		if literalStateIndex != 5 {
+			p.literalStateIndex = literalStateIndex
 			return SIG_NEXT_BYTE
 		}
-	} else {
-		if b >= 'a' {
-			if b <= 'f' {
-				p.hexShortBuffer[p.literalStateIndex] = b
-				return SIG_NEXT_BYTE
-			}
-		} else if b >= 'A' && b <= 'F' {
-			p.hexShortBuffer[p.literalStateIndex] = b + ('a' - 'A')
-			return SIG_NEXT_BYTE
-		}
+		p.handle = handleString
+		p.literalStateIndex = 1
+		return SIG_NEXT_BYTE
 	}
 	return signalUnspecifiedError(p)
 }
 
-func handleStringHexShortOdd(p *Parser, b byte) signal_t {
-	for true {
-		if b <= '9' {
-			if b >= '0' {
-				break
-			}
-		} else {
-			if b >= 'a' {
-				if b <= 'f' {
-					break
-				}
-			} else if b >= 'A' && b <= 'F' {
-				b = b + ('a' - 'A')
-				break
-			}
-		}
-		return signalUnspecifiedError(p)
+func handleStringHexShortEven(p *Parser, b byte) signal_t {
+	p.handle = handleStringHexShortOdd
+	if _, exists := lowerhexchars[b]; exists {
+		goto VALID_EVEN_HEX_CHAR
+	} else if _, exists = caphexchars[b]; exists {
+		b = b + ('a' - 'A') // convert to lower case hex char (speedup)
+		goto VALID_EVEN_HEX_CHAR
 	}
+	return signalUnspecifiedError(p)
+VALID_EVEN_HEX_CHAR:
+	p.hexShortBuffer[p.literalStateIndex] = b
+	return SIG_NEXT_BYTE
+}
+
+func handleStringHexShortOdd(p *Parser, b byte) signal_t {
+	if _, exists := lowerhexchars[b]; exists {
+		goto VALID_ODD_HEX_CHAR
+	} else if _, exists = caphexchars[b]; exists {
+		b = b + ('a' - 'A') // convert to lower case hex char (speedup)
+		goto VALID_ODD_HEX_CHAR
+	}
+	return signalUnspecifiedError(p)
+VALID_ODD_HEX_CHAR:
 	var err error
 	decodedBytes := []byte{0}
 	literalStateIndex := p.literalStateIndex
