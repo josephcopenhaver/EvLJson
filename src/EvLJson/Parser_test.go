@@ -3,6 +3,7 @@ package EvLJson
 import (
 	"bytes"
 	"encoding/hex"
+	"io"
 	"log"
 	"testing"
 )
@@ -16,6 +17,22 @@ var BENCHMARK_BYTES []byte
 
 func init() {
 	BENCHMARK_BYTES = []byte(STR_OBSFUCATED_BENCHMARK_BASIS)
+}
+
+func BenchmarkParseWithCallbacks(b *testing.B) {
+	var err error
+	dataBuffer := make([]byte, TEST_DATA_BUFFER_SIZE)
+	evLJsonParser := NewParser(dataBuffer, nil, 0)
+	onData := func(parser *Parser, endOfData bool) {}
+
+	for i := 0; i < b.N; i++ {
+		reader := bytes.NewReader(BENCHMARK_BYTES)
+		if err = evLJsonParser.Parse(reader, nil, onData); err == nil {
+			evLJsonParser.Reset()
+			continue
+		}
+		log.Fatal(err)
+	}
 }
 
 func BenchmarkParseWithoutCallbacks(b *testing.B) {
@@ -33,16 +50,15 @@ func BenchmarkParseWithoutCallbacks(b *testing.B) {
 	}
 }
 
-func BenchmarkParseWithCallbacks(b *testing.B) {
+func BenchmarkByteReader(b *testing.B) {
 	var err error
-	dataBuffer := make([]byte, TEST_DATA_BUFFER_SIZE)
-	evLJsonParser := NewParser(dataBuffer, nil, 0)
-	onData := func(parser *Parser, endOfData bool) {}
-
 	for i := 0; i < b.N; i++ {
 		reader := bytes.NewReader(BENCHMARK_BYTES)
-		if err = evLJsonParser.Parse(reader, nil, onData); err == nil {
-			evLJsonParser.Reset()
+		_, err = reader.ReadByte()
+		for ; err == nil; _, err = reader.ReadByte() {
+			// Do Nothing
+		}
+		if err == io.EOF {
 			continue
 		}
 		log.Fatal(err)
