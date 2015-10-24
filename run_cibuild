@@ -1,0 +1,15 @@
+#!/bin/bash
+
+
+set -e
+set -x
+
+
+./run_precommit
+
+git diff
+
+./run_tests
+./run_benchmarks
+
+go build src/main.go

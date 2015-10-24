@@ -1,0 +1,5 @@
+language: go
+install: true
+script: bash run_cibuild
+notifications:
+    email: false
