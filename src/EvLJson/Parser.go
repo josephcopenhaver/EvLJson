@@ -304,6 +304,7 @@ func (p *Parser) Parse(byteReader io.ByteReader, onEvent eventReceiver_t, onData
 	var err error
 	var signal signal_t
 	var hexShortBuffer [2]byte
+        handlePtr := &handle
 
 	if onEvent != nil {
 		p.onEvent = onEvent
@@ -327,9 +328,9 @@ NEXT_BYTE:
 		case HANDLE_START:
 			handle = p.handleEnd
 			if b == '[' {
-				pushEnterHandle(p, &handle, p.handleArrayStart, EVT_ARRAY)
+				pushEnterHandle(p, handlePtr, p.handleArrayStart, EVT_ARRAY)
 			} else if b == '{' {
-				pushEnterHandle(p, &handle, p.handleDictStart, EVT_DICT)
+				pushEnterHandle(p, handlePtr, p.handleDictStart, EVT_DICT)
 			} else {
 				return unspecifiedParserError
 			}
@@ -342,7 +343,7 @@ NEXT_BYTE:
 					goto NEXT_BYTE
 				}
 				literalStateIndex = 1
-				popHandle(p, &handle)
+				popHandle(p, handlePtr)
 				goto NEXT_BYTE
 			}
 			return unspecifiedParserError
@@ -353,7 +354,7 @@ NEXT_BYTE:
 					goto NEXT_BYTE
 				}
 				literalStateIndex = 1
-				popHandle(p, &handle)
+				popHandle(p, handlePtr)
 				goto NEXT_BYTE
 			}
 			return unspecifiedParserError
@@ -364,7 +365,7 @@ NEXT_BYTE:
 					goto NEXT_BYTE
 				}
 				literalStateIndex = 1
-				popHandle(p, &handle)
+				popHandle(p, handlePtr)
 				goto NEXT_BYTE
 			}
 			return unspecifiedParserError
@@ -387,7 +388,7 @@ NEXT_BYTE:
 				}
 				return nil
 			default:
-				popHandleEvent(p, &handle)
+				popHandleEvent(p, handlePtr)
 				signal = p.yieldToUserSig(SIG_REUSE_BYTE)
 			}
 		case HANDLE_INT:
@@ -427,7 +428,7 @@ NEXT_BYTE:
 					return nil
 				}
 			default:
-				popHandleEvent(p, &handle)
+				popHandleEvent(p, handlePtr)
 				signal = p.yieldToUserSig(SIG_REUSE_BYTE)
 				goto SIGNAL_PROCESSING
 			}
@@ -446,7 +447,7 @@ NEXT_BYTE:
 				handle = HANDLE_DEC_FRAC_END
 				signal = signalDataNextByte(p, b)
 			} else {
-				popHandleEvent(p, &handle)
+				popHandleEvent(p, handlePtr)
 				signal = p.yieldToUserSig(SIG_REUSE_BYTE)
 			}
 		case HANDLE_DEC_FRAC_END:
@@ -462,7 +463,7 @@ NEXT_BYTE:
 				}
 				return nil
 			default:
-				popHandleEvent(p, &handle)
+				popHandleEvent(p, handlePtr)
 				signal = p.yieldToUserSig(SIG_REUSE_BYTE)
 			}
 		case HANDLE_EXP_COEF_START:
@@ -489,7 +490,7 @@ NEXT_BYTE:
 			if b >= '1' && b <= '9' {
 				handle = HANDLE_EXP_COEF_END
 			} else if b != '0' {
-				popHandleEvent(p, &handle)
+				popHandleEvent(p, handlePtr)
 				signal = p.yieldToUserSig(SIG_REUSE_BYTE)
 				break
 			}
@@ -501,14 +502,14 @@ NEXT_BYTE:
 			} else if b == '0' {
 				return invalidStricterExponentFormat
 			} else {
-				popHandleEvent(p, &handle)
+				popHandleEvent(p, handlePtr)
 				signal = p.yieldToUserSig(SIG_REUSE_BYTE)
 			}
 		case HANDLE_EXP_COEF_END:
 			if b >= '0' && b <= '9' {
 				signal = signalDataNextByte(p, b)
 			} else {
-				popHandleEvent(p, &handle)
+				popHandleEvent(p, handlePtr)
 				signal = p.yieldToUserSig(SIG_REUSE_BYTE)
 			}
 		case HANDLE_STRING:
@@ -519,7 +520,7 @@ NEXT_BYTE:
 				goto NEXT_BYTE
 			case '"':
 				// end of string
-				popHandleEvent(p, &handle)
+				popHandleEvent(p, handlePtr)
 				signal = p.yieldToUserSig(SIG_NEXT_BYTE)
 			default:
 				signal = signalDataNextByte(p, b)
@@ -637,9 +638,9 @@ NEXT_BYTE:
 		case HANDLE_DICT_START:
 			if b == '"' {
 				handle = p.handleDictKVDelim
-				pushEnterHandle(p, &handle, HANDLE_STRING, EVT_STRING)
+				pushEnterHandle(p, handlePtr, HANDLE_STRING, EVT_STRING)
 			} else if b == '}' {
-				popHandleEvent(p, &handle)
+				popHandleEvent(p, handlePtr)
 			} else {
 				return unspecifiedParserError
 			}
@@ -663,7 +664,7 @@ NEXT_BYTE:
 			fallthrough
 		case HANDLE_DICT_VALUE:
 			handle = p.handleDictValueEnd
-			signal = pushNewValueHandle(p, &handle, &err, b)
+			signal = pushNewValueHandle(p, handlePtr, &err, b)
 		case HANDLE_DICT_VALUE_END_AEW:
 			if isCharWhitespace(b) {
 				goto NEXT_BYTE
@@ -675,7 +676,7 @@ NEXT_BYTE:
 				handle = p.handleDictExpectKey
 				goto NEXT_BYTE
 			case '}':
-				popHandleEvent(p, &handle)
+				popHandleEvent(p, handlePtr)
 				signal = p.yieldToUserSig(SIG_NEXT_BYTE)
 			default:
 				return unspecifiedParserError
@@ -688,7 +689,7 @@ NEXT_BYTE:
 		case HANDLE_DICT_EXPECT_KEY:
 			if b == '"' {
 				handle = p.handleDictKVDelim
-				pushEnterHandle(p, &handle, HANDLE_STRING, EVT_STRING)
+				pushEnterHandle(p, handlePtr, HANDLE_STRING, EVT_STRING)
 				signal = p.yieldToUserSig(SIG_NEXT_BYTE)
 			} else {
 				return unspecifiedParserError
@@ -701,9 +702,9 @@ NEXT_BYTE:
 		case HANDLE_ARRAY_START:
 			if b != ']' {
 				handle = p.handleArrayDelim
-				signal = pushNewValueHandle(p, &handle, &err, b)
+				signal = pushNewValueHandle(p, handlePtr, &err, b)
 			} else {
-				popHandleEvent(p, &handle)
+				popHandleEvent(p, handlePtr)
 				signal = p.yieldToUserSig(SIG_NEXT_BYTE)
 			}
 		case HANDLE_ARRAY_DELIM_AEW:
@@ -717,7 +718,7 @@ NEXT_BYTE:
 				handle = p.handleArrayExpectEntry
 				goto NEXT_BYTE
 			case ']':
-				popHandleEvent(p, &handle)
+				popHandleEvent(p, handlePtr)
 				signal = p.yieldToUserSig(SIG_NEXT_BYTE)
 			default:
 				return unspecifiedParserError
@@ -729,7 +730,7 @@ NEXT_BYTE:
 			fallthrough
 		case HANDLE_ARRAY_EXPECT_ENTRY:
 			handle = p.handleArrayDelim
-			signal = pushNewValueHandle(p, &handle, &err, b)
+			signal = pushNewValueHandle(p, handlePtr, &err, b)
 		case HANDLE_END_AEW:
 			for isCharWhitespace(b) {
 				b, err = byteReader.ReadByte()
