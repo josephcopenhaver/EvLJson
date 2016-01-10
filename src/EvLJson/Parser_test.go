@@ -3,6 +3,7 @@ package EvLJson
 import (
 	"bytes"
 	"encoding/hex"
+	"io"
 	"log"
 	"testing"
 )
@@ -18,14 +19,46 @@ func init() {
 	BENCHMARK_BYTES = []byte(STR_OBSFUCATED_BENCHMARK_BASIS)
 }
 
-func BenchmarkParseWithoutCallbacks(b *testing.B) {
+func BenchmarkParseWithCallbacks(b *testing.B) {
 	var err error
 	dataBuffer := make([]byte, TEST_DATA_BUFFER_SIZE)
+	evLJsonParser := NewParser(dataBuffer, nil, 0)
+	onData := func(parser *Parser, endOfData bool) {}
 
 	for i := 0; i < b.N; i++ {
 		reader := bytes.NewReader(BENCHMARK_BYTES)
-		evLJsonParser := NewParser(dataBuffer, 0)
-		if err = evLJsonParser.Parse(reader, nil, nil, 0); err == nil {
+		if err = evLJsonParser.Parse(reader, nil, onData); err == nil {
+			evLJsonParser.Reset()
+			continue
+		}
+		log.Fatal(err)
+	}
+}
+
+func BenchmarkParseWithoutCallbacks(b *testing.B) {
+	var err error
+	dataBuffer := make([]byte, TEST_DATA_BUFFER_SIZE)
+	evLJsonParser := NewParser(dataBuffer, nil, 0)
+
+	for i := 0; i < b.N; i++ {
+		reader := bytes.NewReader(BENCHMARK_BYTES)
+		if err = evLJsonParser.Parse(reader, nil, nil); err == nil {
+			evLJsonParser.Reset()
+			continue
+		}
+		log.Fatal(err)
+	}
+}
+
+func BenchmarkByteReader(b *testing.B) {
+	var err error
+	for i := 0; i < b.N; i++ {
+		reader := bytes.NewReader(BENCHMARK_BYTES)
+		_, err = reader.ReadByte()
+		for ; err == nil; _, err = reader.ReadByte() {
+			// Do Nothing
+		}
+		if err == io.EOF {
 			continue
 		}
 		log.Fatal(err)
@@ -34,20 +67,20 @@ func BenchmarkParseWithoutCallbacks(b *testing.B) {
 
 func parseStringAllowWhitespace(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
-	evLJsonParser := NewParser(nil, 0)
-	return evLJsonParser.Parse(reader, nil, nil, OPT_ALLOW_EXTRA_WHITESPACE)
+	evLJsonParser := NewParser(nil, nil, OPT_ALLOW_EXTRA_WHITESPACE)
+	return evLJsonParser.Parse(reader, nil, nil)
 }
 
 func parseStringWithoutCallbacksOrOptions(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
-	evLJsonParser := NewParser(nil, 0)
-	return evLJsonParser.Parse(reader, nil, nil, 0)
+	evLJsonParser := NewParser(nil, nil, 0)
+	return evLJsonParser.Parse(reader, nil, nil)
 }
 
 func parseStringWithoutCallbacksTillEOF(jsonString string) error {
 	reader := bytes.NewReader([]byte(jsonString))
-	evLJsonParser := NewParser(nil, 0)
-	return evLJsonParser.Parse(reader, nil, nil, OPT_PARSE_UNTIL_EOF)
+	evLJsonParser := NewParser(nil, nil, OPT_PARSE_UNTIL_EOF)
+	return evLJsonParser.Parse(reader, nil, nil)
 }
 
 func TestInvalidJsonEmpty(t *testing.T) {
