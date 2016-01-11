@@ -304,7 +304,7 @@ func (p *Parser) Parse(byteReader io.ByteReader, onEvent eventReceiver_t, onData
 	var err error
 	var signal signal_t
 	var hexShortBuffer [2]byte
-        handlePtr := &handle
+	handlePtr := &handle
 
 	if onEvent != nil {
 		p.onEvent = onEvent
