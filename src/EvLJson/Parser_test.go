@@ -222,6 +222,41 @@ func TestBadJson(t *testing.T) {
 	}
 }
 
+func TestHexStrings(t *testing.T) {
+	testCases := []string{
+		"[\"\\u0000\"]",
+		"[\" \\u0000 \"]",
+		"[\"\\u0000 \"]",
+		"[\" \\u0000\"]",
+		"[\"\\uffff\"]",
+		"[\" \\uffff \"]",
+		"[\"\\uffff \"]",
+		"[\" \\uffff\"]",
+		"[\"\\uFFFF\"]",
+		"[\" \\uFFFF \"]",
+		"[\"\\uFFFF \"]",
+		"[\" \\uFFFF\"]",
+		"[\"\\uafFA\"]",
+		"[\" \\uafFA \"]",
+		"[\"\\uafFA \"]",
+		"[\" \\uafFA\"]",
+	}
+	for _, str := range testCases {
+		t.Logf(LOG_STMT_FMT, str)
+		err := parseStringWithoutCallbacksOrOptions(str)
+		if err != nil {
+			t.FailNow()
+		}
+	}
+	for _, str := range testCases {
+		t.Logf(LOG_STMT_FMT, str)
+		err := parseStringWithoutCallbacksTillEOF(str)
+		if err != nil {
+			t.FailNow()
+		}
+	}
+}
+
 func whitespaceTestCases() []string {
 	return []string{
 		" [ 0 ] ",
