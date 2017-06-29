@@ -212,11 +212,118 @@ func TestBadJson(t *testing.T) {
 		"[1.2e-1.]",
 		"[1.2e-.]",
 		"[1.2e-.0]",
-	}
+        "truetrue",
+        "truefalse",
+        "truenull",
+        "falsefalse",
+        "falsetrue",
+        "falsenull",
+        "nullnull",
+        "nulltrue",
+        "nullfalse",
+        "[truetrue]",
+        "[truefalse]",
+        "[truenull]",
+        "[falsefalse]",
+        "[falsetrue]",
+        "[falsenull]",
+        "[nullnull]",
+        "[nulltrue]",
+        "[nullfalse]",
+        "{true:truetrue}",
+        "{true:truefalse}",
+        "{true:truenull}",
+        "{true:falsefalse}",
+        "{true:falsetrue}",
+        "{true:falsenull}",
+        "{true:nullnull}",
+        "{true:nulltrue}",
+        "{true:nullfalse}",
+        "{false:truetrue}",
+        "{false:truefalse}",
+        "{false:truenull}",
+        "{false:falsefalse}",
+        "{false:falsetrue}",
+        "{false:falsenull}",
+        "{false:nullnull}",
+        "{false:nulltrue}",
+        "{false:nullfalse}",
+        "{null:truetrue}",
+        "{null:truefalse}",
+        "{null:truenull}",
+        "{null:falsefalse}",
+        "{null:falsetrue}",
+        "{null:falsenull}",
+        "{null:nullnull}",
+        "{null:nulltrue}",
+        "{null:nullfalse}",
+        "{truetrue:true}",
+        "{truefalse:true}",
+        "{truenull:true}",
+        "{falsefalse:true}",
+        "{falsetrue:true}",
+        "{falsenull:true}",
+        "{nullnull:true}",
+        "{nulltrue:true}",
+        "{nullfalse:true}",
+        "{truetrue:false}",
+        "{truefalse:false}",
+        "{truenull:false}",
+        "{falsefalse:false}",
+        "{falsetrue:false}",
+        "{falsenull:false}",
+        "{nullnull:false}",
+        "{nulltrue:false}",
+        "{nullfalse:false}",
+        "{truetrue:null}",
+        "{truefalse:null}",
+        "{truenull:null}",
+        "{falsefalse:null}",
+        "{falsetrue:null}",
+        "{falsenull:null}",
+        "{nullnull:null}",
+        "{nulltrue:null}",
+        "{nullfalse:null}",
+    }
 	for _, str := range testCases {
 		t.Logf(LOG_STMT_FMT, str)
 		err := parseStringWithoutCallbacksOrOptions(str)
 		if err == nil {
+			t.FailNow()
+		}
+	}
+}
+
+func TestHexStrings(t *testing.T) {
+	testCases := []string{
+		"[\"\\u0000\"]",
+		"[\" \\u0000 \"]",
+		"[\"\\u0000 \"]",
+		"[\" \\u0000\"]",
+		"[\"\\uffff\"]",
+		"[\" \\uffff \"]",
+		"[\"\\uffff \"]",
+		"[\" \\uffff\"]",
+		"[\"\\uFFFF\"]",
+		"[\" \\uFFFF \"]",
+		"[\"\\uFFFF \"]",
+		"[\" \\uFFFF\"]",
+		"[\"\\uafFA\"]",
+		"[\" \\uafFA \"]",
+		"[\"\\uafFA \"]",
+		"[\" \\uafFA\"]",
+	}
+	for _, str := range testCases {
+		t.Logf(LOG_STMT_FMT, str)
+		err := parseStringWithoutCallbacksOrOptions(str)
+		if err != nil {
+			t.FailNow()
+		}
+	}
+	for _, str := range testCases {
+		t.Logf(LOG_STMT_FMT, str)
+		err := parseStringWithoutCallbacksTillEOF(str)
+		if err != nil {
 			t.FailNow()
 		}
 	}

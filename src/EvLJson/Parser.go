@@ -7,16 +7,7 @@ import (
 	//"log"  // DEBUG
 )
 
-// REMINDER: leave data member [literalStateIndex] in as removing it
-// would only result in the same # of operations, but using more jump
-// table space which slows performance
-
-// at least two for encoded short chars in strings plus 1 so that short
-// handling does not need to signal more than once as the buffer is updated
-//
-// ^^^ this is very important ^^^
-//
-const MIN_DATA_BUFFER_SIZE = 3
+const MIN_DATA_BUFFER_SIZE = 2
 
 // minimum nominal case will require 3 state levels
 const MIN_STACK_DEPTH = 3
@@ -31,6 +22,11 @@ const ( // signal_t
 	SIG_REUSE_BYTE
 	SIG_STOP
 	SIG_ERR
+)
+const ( // literal_t
+	HANDLE_LITERAL_NULL = iota
+	HANDLE_LITERAL_TRUE
+	HANDLE_LITERAL_FALSE
 )
 const (
 	VALUE_STR_NULL  = "null"
@@ -53,6 +49,7 @@ const ( // event_t
 
 type handle_t uint8
 type signal_t uint8
+type literal_t uint8
 type event_t uint8
 type eventReceiver_t func(parser *Parser, evt event_t)
 type dataReceiver_t func(parser *Parser, endOfData bool)
@@ -118,7 +115,62 @@ func pushEnterHandle(p *Parser, handle *handle_t, newHandle handle_t, evt event_
 	}
 }
 
-func pushNewValueHandle(p *Parser, handle *handle_t, err *error, b byte) signal_t {
+func handleLiteral(p *Parser, byteReader io.ByteReader, err *error, t literal_t) signal_t {
+	var idx uint8 = 1
+	var str_length uint8
+	var b byte
+	var lerr error
+	var str string
+	switch t {
+	case HANDLE_LITERAL_NULL:
+		p.onEvent(p, EVT_NULL)
+		if p.userSignal == SIG_STOP {
+			return SIG_STOP
+		}
+		str = VALUE_STR_NULL
+		str_length = uint8(len(VALUE_STR_NULL))
+	case HANDLE_LITERAL_TRUE:
+		p.onEvent(p, EVT_TRUE)
+		if p.userSignal == SIG_STOP {
+			return SIG_STOP
+		}
+		str = VALUE_STR_TRUE
+		str_length = uint8(len(VALUE_STR_TRUE))
+	case HANDLE_LITERAL_FALSE:
+		p.onEvent(p, EVT_FALSE)
+		if p.userSignal == SIG_STOP {
+			return SIG_STOP
+		}
+		str = VALUE_STR_FALSE
+		str_length = uint8(len(VALUE_STR_FALSE))
+	}
+LITERAL_NEXT_BYTE:
+	// if idx == uint8(len(str)) {
+	//     return SIG_NEXT_BYTE
+	// }
+	//
+	// All literal types are greater than 2 chars
+	// so moving this to after idx++
+	//
+	b, lerr = byteReader.ReadByte()
+	if lerr == nil {
+		if str[idx] == b {
+			idx++
+			if idx < str_length {
+				goto LITERAL_NEXT_BYTE
+			}
+			return SIG_NEXT_BYTE
+		} else {
+			*err = unspecifiedParserError
+			return SIG_ERR
+		}
+	} else {
+		*err = lerr
+		return SIG_ERR
+	}
+}
+
+func pushNewValueHandle(p *Parser, byteReader io.ByteReader, handle *handle_t, err *error, b byte) signal_t {
 	if b >= '1' && b <= '9' {
 		p.DataIsJsonNum = true
 		pushEnterHandle(p, handle, HANDLE_INT, EVT_NUMBER)
@@ -133,14 +185,11 @@ func pushNewValueHandle(p *Parser, handle *handle_t, err *error, b byte) signal_
 	case '{':
 		pushEnterHandle(p, handle, p.handleDictStart, EVT_DICT)
 	case VALUE_STR_NULL[0]:
-		p.onEvent(p, EVT_NULL)
-		pushHandle(p, handle, HANDLE_NULL)
+		return handleLiteral(p, byteReader, err, HANDLE_LITERAL_NULL)
 	case VALUE_STR_FALSE[0]:
-		p.onEvent(p, EVT_FALSE)
-		pushHandle(p, handle, HANDLE_FALSE)
+		return handleLiteral(p, byteReader, err, HANDLE_LITERAL_FALSE)
 	case VALUE_STR_TRUE[0]:
-		p.onEvent(p, EVT_TRUE)
-		pushHandle(p, handle, HANDLE_TRUE)
+		return handleLiteral(p, byteReader, err, HANDLE_LITERAL_TRUE)
 	case '"':
 		p.DataIsJsonNum = false
 		pushEnterHandle(p, handle, HANDLE_STRING, EVT_STRING)
@@ -181,9 +230,6 @@ FIRE_LEAVE_EVT:
 const ( // handle_t
 	HANDLE_START_AEW = iota
 	HANDLE_START
-	HANDLE_NULL
-	HANDLE_TRUE
-	HANDLE_FALSE
 	HANDLE_ZD_EXP_START // handleZeroOrDecimalOrExponentStart
 	HANDLE_INT
 	HANDLE_ZD_EXPN_START         // handleZeroOrDecimalOrExponentNegativeStart
@@ -196,9 +242,6 @@ const ( // handle_t
 	HANDLE_EXP_COEF_END          // handleExponentCoefficientEnd
 	HANDLE_STRING
 	HANDLE_STRING_RSP // handleStringReverseSolidusPrefix
-	HANDLE_HEX_NR     // handleStringHexShortNoReporting
-	HANDLE_HEX_EVEN   // handleStringHexShortEven
-	HANDLE_HEX_ODD    // handleStringHexShortOdd
 	HANDLE_DICT_START_AEW
 	HANDLE_DICT_START
 	HANDLE_DICT_KV_DELIM_AEW
@@ -299,12 +342,11 @@ func (p *Parser) ParseStop() {
 func (p *Parser) Parse(byteReader io.ByteReader, onEvent eventReceiver_t, onData dataReceiver_t) error {
 	isEmptyJson := true
 	handle := p.handleStart
-	var literalStateIndex uint8 = 1
 	var b byte
 	var err error
 	var signal signal_t
-	var hexShortBuffer [2]byte
 	handlePtr := &handle
+	errPtr := &err
 
 	if onEvent != nil {
 		p.onEvent = onEvent
@@ -321,7 +363,7 @@ NEXT_BYTE:
 		// fmt.Printf("%s: %d\n", string(b), handle)  // DEBUG
 		switch handle {
 		case HANDLE_START_AEW:
-			if isCharWhitespace(b) {
+			if _, isWhitespace := whitespaces[b]; isWhitespace {
 				goto NEXT_BYTE
 			}
 			fallthrough
@@ -336,39 +378,6 @@ NEXT_BYTE:
 			}
 			isEmptyJson = false
 			signal = p.yieldToUserSig(SIG_NEXT_BYTE)
-		case HANDLE_NULL:
-			if b == VALUE_STR_NULL[literalStateIndex] {
-				if literalStateIndex != uint8(len(VALUE_STR_NULL)-1) {
-					literalStateIndex++
-					goto NEXT_BYTE
-				}
-				literalStateIndex = 1
-				popHandle(p, handlePtr)
-				goto NEXT_BYTE
-			}
-			return unspecifiedParserError
-		case HANDLE_TRUE:
-			if b == VALUE_STR_TRUE[literalStateIndex] {
-				if literalStateIndex != uint8(len(VALUE_STR_TRUE)-1) {
-					literalStateIndex++
-					goto NEXT_BYTE
-				}
-				literalStateIndex = 1
-				popHandle(p, handlePtr)
-				goto NEXT_BYTE
-			}
-			return unspecifiedParserError
-		case HANDLE_FALSE:
-			if b == VALUE_STR_FALSE[literalStateIndex] {
-				if literalStateIndex != uint8(len(VALUE_STR_FALSE)-1) {
-					literalStateIndex++
-					goto NEXT_BYTE
-				}
-				literalStateIndex = 1
-				popHandle(p, handlePtr)
-				goto NEXT_BYTE
-			}
-			return unspecifiedParserError
 		case HANDLE_ZD_EXP_START:
 			switch b {
 			case '.':
@@ -554,12 +563,75 @@ NEXT_BYTE:
 			case '"':
 				goto UNESCAPED
 			case 'u':
+				var hexIdx uint8 = 0
 				if p.OnData == nil {
-					handle = HANDLE_HEX_NR
-				} else {
-					handle = HANDLE_HEX_EVEN
+					goto HEX_NO_DATA_REPORTING
 				}
-				goto NEXT_BYTE
+				goto HEX_DATA_REPORTING
+			HEX_NO_DATA_REPORTING:
+				for true {
+					b, err = byteReader.ReadByte()
+					if err == nil {
+						if _, exists := allhexchars[b]; exists {
+							if hexIdx < 3 {
+								hexIdx++
+								continue
+							}
+							handle = HANDLE_STRING
+							goto NEXT_BYTE
+						}
+						return unspecifiedParserError
+					}
+					return err
+				}
+			HEX_DATA_REPORTING:
+				dataBufferSize := len(p.DataBuffer)
+				// verify that data signaling only needs to happen at most once
+				if cap(p.DataBuffer)-2 > dataBufferSize {
+					p.OnData(p, DATA_CONTINUES)
+					if p.userSignal == SIG_STOP {
+						return nil
+					} else if p.OnData == nil {
+						goto HEX_NO_DATA_REPORTING
+					}
+					p.DataBuffer = p.DataBuffer[:0]
+					dataBufferSize = 0
+				}
+				byteIdx := 0
+				hexShortBuffer := []byte{0, 0}
+				decodedByte := []byte{0}
+				for true {
+					b, err = byteReader.ReadByte()
+					if err == nil {
+						if _, exists := lowerhexchars[b]; exists {
+							// Do Nothing
+						} else if _, exists = caphexchars[b]; exists {
+							b += ('a' - 'A')
+						} else {
+							return unspecifiedParserError
+						}
+						hexShortBuffer[hexIdx] = b
+						if hexIdx == 0 {
+							hexIdx = 1
+							continue
+						}
+						if _, err = hex.Decode(decodedByte, hexShortBuffer); err == nil {
+							p.DataBuffer = p.DataBuffer[0 : dataBufferSize+1]
+							p.DataBuffer[dataBufferSize] = decodedByte[0]
+							if byteIdx == 0 {
+								hexIdx = 0
+								byteIdx = 1
+								dataBufferSize++
+								continue
+							}
+							handle = HANDLE_STRING
+							goto NEXT_BYTE
+						} else {
+							return err
+						}
+					}
+					return err
+				}
 			default:
 				return unspecifiedParserError
 			}
@@ -567,71 +639,8 @@ NEXT_BYTE:
 		UNESCAPED:
 			handle = HANDLE_STRING
 			signal = signalDataNextByte(p, b)
-		case HANDLE_HEX_NR:
-			if _, exists := allhexchars[b]; exists {
-				newLiteralStateIndex := literalStateIndex + 1
-				if newLiteralStateIndex != 5 {
-					literalStateIndex = newLiteralStateIndex
-				} else {
-					handle = HANDLE_STRING
-					literalStateIndex = 1
-				}
-				goto NEXT_BYTE
-			} else {
-				return unspecifiedParserError
-			}
-		case HANDLE_HEX_EVEN:
-			handle = HANDLE_HEX_ODD
-			if _, exists := lowerhexchars[b]; exists {
-				// Do Nothing
-			} else if _, exists = caphexchars[b]; exists {
-				b = b + ('a' - 'A') // convert to lower case hex char (speedup)
-			} else {
-				return unspecifiedParserError
-			}
-			hexShortBuffer[literalStateIndex] = b
-			goto NEXT_BYTE
-		case HANDLE_HEX_ODD:
-			if _, exists := lowerhexchars[b]; exists {
-				// Do Nothing
-			} else if _, exists = caphexchars[b]; exists {
-				b = b + ('a' - 'A') // convert to lower case hex char (speedup)
-			} else {
-				return unspecifiedParserError
-			}
-			var err error
-			decodedBytes := []byte{0}
-			newLiteralStateIndex := literalStateIndex
-			if _, err = hex.Decode(decodedBytes, []byte{hexShortBuffer[newLiteralStateIndex], b}); err == nil {
-				if newLiteralStateIndex == 1 {
-					literalStateIndex = 0
-					handle = HANDLE_HEX_EVEN
-					hexShortBuffer[1] = decodedBytes[0]
-					goto NEXT_BYTE
-				} else {
-					literalStateIndex = 1
-					handle = HANDLE_STRING
-				}
-				size := len(p.DataBuffer)
-				if !(size+1 >= cap(p.DataBuffer)) {
-					p.DataBuffer = p.DataBuffer[0 : size+2]
-					p.DataBuffer[size] = hexShortBuffer[1]
-					size++
-					p.DataBuffer[size] = decodedBytes[0]
-					goto NEXT_BYTE
-				}
-				p.OnData(p, DATA_CONTINUES)
-				if p.userSignal != SIG_STOP {
-					p.DataBuffer = p.DataBuffer[0:2]
-					p.DataBuffer[0] = hexShortBuffer[1]
-					p.DataBuffer[1] = decodedBytes[0]
-					goto NEXT_BYTE
-				}
-				return nil
-			}
-			return err
 		case HANDLE_DICT_START_AEW:
-			if isCharWhitespace(b) {
+			if _, isWhitespace := whitespaces[b]; isWhitespace {
 				goto NEXT_BYTE
 			}
 			fallthrough
@@ -646,7 +655,7 @@ NEXT_BYTE:
 			}
 			signal = p.yieldToUserSig(SIG_NEXT_BYTE)
 		case HANDLE_DICT_KV_DELIM_AEW:
-			if isCharWhitespace(b) {
+			if _, isWhitespace := whitespaces[b]; isWhitespace {
 				goto NEXT_BYTE
 			}
 			fallthrough
@@ -658,15 +667,15 @@ NEXT_BYTE:
 				return unspecifiedParserError
 			}
 		case HANDLE_DICT_VALUE_AEW:
-			if isCharWhitespace(b) {
+			if _, isWhitespace := whitespaces[b]; isWhitespace {
 				goto NEXT_BYTE
 			}
 			fallthrough
 		case HANDLE_DICT_VALUE:
 			handle = p.handleDictValueEnd
-			signal = pushNewValueHandle(p, handlePtr, &err, b)
+			signal = pushNewValueHandle(p, byteReader, handlePtr, errPtr, b)
 		case HANDLE_DICT_VALUE_END_AEW:
-			if isCharWhitespace(b) {
+			if _, isWhitespace := whitespaces[b]; isWhitespace {
 				goto NEXT_BYTE
 			}
 			fallthrough
@@ -682,7 +691,7 @@ NEXT_BYTE:
 				return unspecifiedParserError
 			}
 		case HANDLE_DICT_EXPECT_KEY_AEW:
-			if isCharWhitespace(b) {
+			if _, isWhitespace := whitespaces[b]; isWhitespace {
 				goto NEXT_BYTE
 			}
 			fallthrough
@@ -695,20 +704,20 @@ NEXT_BYTE:
 				return unspecifiedParserError
 			}
 		case HANDLE_ARRAY_START_AEW:
-			if isCharWhitespace(b) {
+			if _, isWhitespace := whitespaces[b]; isWhitespace {
 				goto NEXT_BYTE
 			}
 			fallthrough
 		case HANDLE_ARRAY_START:
 			if b != ']' {
 				handle = p.handleArrayDelim
-				signal = pushNewValueHandle(p, handlePtr, &err, b)
+				signal = pushNewValueHandle(p, byteReader, handlePtr, errPtr, b)
 			} else {
 				popHandleEvent(p, handlePtr)
 				signal = p.yieldToUserSig(SIG_NEXT_BYTE)
 			}
 		case HANDLE_ARRAY_DELIM_AEW:
-			if isCharWhitespace(b) {
+			if _, isWhitespace := whitespaces[b]; isWhitespace {
 				goto NEXT_BYTE
 			}
 			fallthrough
@@ -724,15 +733,15 @@ NEXT_BYTE:
 				return unspecifiedParserError
 			}
 		case HANDLE_ARRAY_EXPECT_ENTRY_AEW:
-			if isCharWhitespace(b) {
+			if _, isWhitespace := whitespaces[b]; isWhitespace {
 				goto NEXT_BYTE
 			}
 			fallthrough
 		case HANDLE_ARRAY_EXPECT_ENTRY:
 			handle = p.handleArrayDelim
-			signal = pushNewValueHandle(p, handlePtr, &err, b)
+			signal = pushNewValueHandle(p, byteReader, handlePtr, errPtr, b)
 		case HANDLE_END_AEW:
-			for isCharWhitespace(b) {
+			for _, isWhitespace := whitespaces[b]; isWhitespace; {
 				b, err = byteReader.ReadByte()
 				if err == nil {
 					continue
