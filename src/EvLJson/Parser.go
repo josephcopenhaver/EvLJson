@@ -117,6 +117,7 @@ func pushEnterHandle(p *Parser, handle *handle_t, newHandle handle_t, evt event_
 
 func handleLiteral(p *Parser, byteReader io.ByteReader, err *error, t literal_t) signal_t {
 	var idx uint8 = 1
+	var str_length uint8
 	var b byte
 	var lerr error
 	var str string
@@ -127,18 +128,21 @@ func handleLiteral(p *Parser, byteReader io.ByteReader, err *error, t literal_t)
 			return SIG_STOP
 		}
 		str = VALUE_STR_NULL
+		str_length = uint8(len(VALUE_STR_NULL))
 	case HANDLE_LITERAL_TRUE:
 		p.onEvent(p, EVT_TRUE)
 		if p.userSignal == SIG_STOP {
 			return SIG_STOP
 		}
 		str = VALUE_STR_TRUE
+		str_length = uint8(len(VALUE_STR_TRUE))
 	case HANDLE_LITERAL_FALSE:
 		p.onEvent(p, EVT_FALSE)
 		if p.userSignal == SIG_STOP {
 			return SIG_STOP
 		}
 		str = VALUE_STR_FALSE
+		str_length = uint8(len(VALUE_STR_FALSE))
 	}
 LITERAL_NEXT_BYTE:
 	// if idx == uint8(len(str)) {
@@ -152,7 +156,7 @@ LITERAL_NEXT_BYTE:
 	if lerr == nil {
 		if str[idx] == b {
 			idx++
-			if idx < uint8(len(str)) {
+			if idx < str_length {
 				goto LITERAL_NEXT_BYTE
 			}
 			return SIG_NEXT_BYTE
